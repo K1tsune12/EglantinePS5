@@ -15,6 +15,8 @@ static std::uint64_t last_polled_frame{};
 static std::uint64_t pending_nonce{};
 static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
+static std::atomic<bool> download_batch_enabled{};
+static std::atomic<std::uint64_t> download_copy_regions{}, download_copy_commands{};
 static std::atomic<bool> vulkan_handoff_enabled{};
 // Diagnostic43: exercise range-local mapping updates during initial loading.
 static std::atomic<bool> mapping_enabled{true};
@@ -111,6 +113,23 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
 
 void Frame(std::uint64_t frame, std::uint64_t ns) {
     if (frame % 10 == 0) {
+        const char* copy_batch_path = "/data/homebrew/PPSA98515/mkw-copy-batch-mode.txt";
+        if (FILE* mode = std::fopen(copy_batch_path, "r")) {
+            unsigned value{};
+            if (std::fscanf(mode, "%u", &value) == 1 && value <= 1) {
+                download_batch_enabled.store(value != 0, std::memory_order_release);
+                std::printf("MKW_COPY_BATCH_MODE frame=%llu mode=%u regions=%llu commands=%llu\n",
+                    static_cast<unsigned long long>(frame), value,
+                    static_cast<unsigned long long>(download_copy_regions.load()),
+                    static_cast<unsigned long long>(download_copy_commands.load()));
+            }
+            std::fclose(mode);
+            std::remove(copy_batch_path);
+        }
+        if (frame % 30 == 0) std::printf("MKW_COPY_BATCH_STATS frame=%llu mode=%u regions=%llu commands=%llu\n",
+            static_cast<unsigned long long>(frame), unsigned(download_batch_enabled.load()),
+            static_cast<unsigned long long>(download_copy_regions.load()),
+            static_cast<unsigned long long>(download_copy_commands.load()));
         const char* handoff_path = "/data/homebrew/PPSA98515/mkw-handoff-mode.txt";
         if (FILE* mode = std::fopen(handoff_path, "r")) {
             unsigned value{};
@@ -310,4 +329,12 @@ extern "C" void eden_mapped_readback_reject(unsigned reason) {
 
 extern "C" bool eden_vulkan_handoff_enabled() {
     return Eden::OrderedReadTrace::vulkan_handoff_enabled.load(std::memory_order_acquire);
+}
+
+extern "C" bool eden_download_copy_batch_enabled() {
+    return Eden::OrderedReadTrace::download_batch_enabled.load(std::memory_order_acquire);
+}
+extern "C" void eden_download_copy_batch_result(std::uint64_t regions, std::uint64_t commands) {
+    Eden::OrderedReadTrace::download_copy_regions.fetch_add(regions, std::memory_order_relaxed);
+    Eden::OrderedReadTrace::download_copy_commands.fetch_add(commands, std::memory_order_relaxed);
 }

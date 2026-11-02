@@ -80,6 +80,7 @@ if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
     python3 -B "$root/tools/check-native-allocator-header.py"
     python3 -B "$root/tools/check-gpu-time-probe.py"
     python3 -B "$root/tools/check-fence-requirements.py"
+    python3 -B "$root/tools/check-download-copy-batches.py"
 fi
 # Source checks of the release configuration (development builds opt out: EDEN_SKIP_SOURCE_CHECKS=1).
 [[ ${EDEN_SKIP_SOURCE_CHECKS:-0} == 1 ]] && exit 0

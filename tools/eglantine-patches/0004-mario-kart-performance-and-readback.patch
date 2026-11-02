@@ -5347,27 +5347,65 @@ index 0000000000..55195626cd
 +    CHECK(calls == 0);
 +}
 diff --git a/src/video_core/buffer_cache/buffer_cache.h b/src/video_core/buffer_cache/buffer_cache.h
-index 211b725e5e..a3af4022fb 100644
+index 211b725e5e..ca6e2cd2f8 100644
 --- a/src/video_core/buffer_cache/buffer_cache.h
 +++ b/src/video_core/buffer_cache/buffer_cache.h
-@@ -7,6 +7,8 @@
+@@ -7,9 +7,13 @@
  #pragma once
  
  #include <algorithm>
++#include <array>
 +#include <atomic>
 +#include <cstdio>
  #include <memory>
  #include <numeric>
  #include <stdexcept>
-@@ -20,6 +22,7 @@
++#include <span>
+ #include <vector>
+ #include <fmt/ranges.h>
+ 
+@@ -20,12 +24,40 @@
  #include "video_core/nx2.h"
  #include "video_core/nx2_profile.h"
  #include "video_core/cache_tracking_diagnostics.h"
 +#include "video_core/readback_dependency_diagnostics.h"
++#include "video_core/readback_diagnostics.h"
  #include "video_core/texture_cache/util.h"
  
  namespace VideoCommon {
-@@ -161,6 +164,8 @@ void BufferCache<P>::TickFrame() {
+ 
+ using Core::DEVICE_PAGESIZE;
+ 
++extern "C" bool eden_download_copy_batch_enabled() __attribute__((weak));
++extern "C" void eden_download_copy_batch_result(u64 regions, u64 commands) __attribute__((weak));
++
++// Consecutive regions from one source share a command. Keep the complete region
++// order, including A/B/A source changes; destination offsets already name disjoint
++// staging ranges. The callback must copy the bounded span before returning.
++template <size_t Capacity = 32, class Downloads, class Function>
++void ForEachDownloadCopyBatch(const Downloads& downloads, Function&& function) {
++    static_assert(Capacity > 0);
++    if (downloads.empty()) return;
++    using Copy = typename Downloads::value_type::first_type;
++    std::array<Copy, Capacity> batch;
++    auto source = downloads.front().second;
++    size_t count = 0;
++    const auto flush = [&] {
++        function(source, std::span<const Copy>{batch.data(), count});
++        count = 0;
++    };
++    for (const auto& [copy, id] : downloads) {
++        if (count && (source != id || count == Capacity)) flush();
++        source = id;
++        batch[count++] = copy;
++    }
++    if (count) flush();
++}
++
+ template <class P>
+ BufferCache<P>::BufferCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, Runtime& runtime_)
+     : runtime{runtime_}, device_memory{device_memory_}, memory_tracker{device_memory} {
+@@ -161,6 +193,8 @@ void BufferCache<P>::TickFrame() {
  
  template <class P>
  void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size) {
@@ -5376,7 +5414,7 @@ index 211b725e5e..a3af4022fb 100644
      if constexpr (requires { runtime.BindMultiRangeStorageBuffer(u64{}, bool{}); }) {
          virtual_ranges.Unmap(as_id, gpu_addr, size);
      }
-@@ -168,6 +173,13 @@ void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size
+@@ -168,6 +202,13 @@ void BufferCache<P>::UnmapGPUMemory(size_t as_id, GPUVAddr gpu_addr, size_t size
  
  template <class P>
  void BufferCache<P>::WriteMemory(DAddr device_addr, u64 size) {
@@ -5390,7 +5428,7 @@ index 211b725e5e..a3af4022fb 100644
      CacheTrackingDiagnostics::Record(CacheTrackingDiagnostics::Event::BufferCpuMark,
                                        device_addr, size);
      if (IsRegionGpuModified(device_addr, size)) {
-@@ -369,6 +381,8 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
+@@ -369,6 +410,8 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
          MarkWrittenBuffer(buffer_id, device_addr, size);
          break;
      case ObtainBufferOperation::DiscardWrite: {
@@ -5399,16 +5437,39 @@ index 211b725e5e..a3af4022fb 100644
          ClearDownload(device_addr, size);
          gpu_modified_ranges.Subtract(device_addr, size);
          break;
-@@ -731,6 +745,8 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
+@@ -710,7 +753,6 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
+     runtime.PreCopyBarrier();
+     for (auto& [copy, buffer_id] : downloads) {
+         copy.dst_offset += download_staging.offset;
+-        const std::array copies{copy};
+         BufferCopy second_copy{copy};
+         Buffer& buffer = slot_buffers[buffer_id];
+         second_copy.src_offset = static_cast<size_t>(buffer.CpuAddr()) + copy.src_offset;
+@@ -730,9 +772,22 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
+         }
          async_downloads.Add(orig_device_addr, copy.size);
          buffer.MarkUsage(copy.src_offset, copy.size);
-         runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
+-        runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
 +        ReadbackDependencyDiagnostics::BufferCopySource(runtime, buffer, copy.src_offset, copy.size, true);
 +        ReadbackDependencyDiagnostics::BufferCopyBytes(copy.size, 0);
          normalized_copies.push_back(second_copy);
      }
++    u64 copy_commands = 0;
++    const auto record = [&](BufferId id, std::span<const BufferCopy> regions) {
++        runtime.CopyBuffer(download_staging.buffer, slot_buffers[id], regions, false);
++        ++copy_commands;
++    };
++    if (eden_download_copy_batch_enabled && eden_download_copy_batch_enabled()) {
++        ForEachDownloadCopyBatch(downloads, record);
++    } else {
++        for (const auto& [copy, id] : downloads) record(id, std::span{&copy, 1});
++    }
++    if (ReadbackDiagnostics::Enabled() && eden_download_copy_batch_result)
++        eden_download_copy_batch_result(downloads.size(), copy_commands);
      runtime.PostCopyBarrier();
-@@ -768,6 +784,7 @@ void BufferCache<P>::PopAsyncBuffers() {
+     pending_downloads.emplace_back(std::move(normalized_copies));
+     async_buffers.emplace_back(download_staging);
+@@ -768,6 +823,7 @@ void BufferCache<P>::PopAsyncBuffers() {
          async_downloads.ForEachInRange(device_addr, copy.size, [&](DAddr start, DAddr end, s32) {
              device_memory.WriteBlockUnsafe(start, &read_mapped_memory[start - device_addr],
                                             end - start);
@@ -5416,7 +5477,7 @@ index 211b725e5e..a3af4022fb 100644
          });
          async_downloads.Subtract(device_addr, copy.size, [&](DAddr start, DAddr end) {
              if (uncommitted_gpu_modified_ranges.Intersects(start, end - start) ||
-@@ -1446,6 +1463,15 @@ void BufferCache<P>::UpdateIndexBuffer() {
+@@ -1446,6 +1502,15 @@ void BufferCache<P>::UpdateIndexBuffer() {
      const u32 address_size = static_cast<u32>(gpu_addr_end - gpu_addr_begin);
      const u32 draw_size = (index_buffer_ref.count + index_buffer_ref.first) * u32(index_buffer_ref.FormatSizeInBytes());
      const u32 size = (std::min)(address_size, draw_size);
@@ -5432,7 +5493,7 @@ index 211b725e5e..a3af4022fb 100644
      if (size == 0 || !device_addr) {
          channel_state->index_buffer = NULL_BINDING;
          return;
-@@ -1632,6 +1658,11 @@ void BufferCache<P>::UpdateComputeTextureBuffers() {
+@@ -1632,6 +1697,11 @@ void BufferCache<P>::UpdateComputeTextureBuffers() {
  
  template <class P>
  void BufferCache<P>::MarkWrittenBuffer(BufferId buffer_id, DAddr device_addr, u32 size, bool needs_sync) {
@@ -5444,7 +5505,7 @@ index 211b725e5e..a3af4022fb 100644
      if constexpr (!IS_OPENGL) {
          if (needs_sync) {
              Buffer& buffer = slot_buffers[buffer_id];
-@@ -1666,6 +1697,9 @@ BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_com
+@@ -1666,6 +1736,9 @@ BufferId BufferCache<P>::FindBuffer(DAddr device_addr, u32 size, bool sparse_com
                      usable = false;
                  }
              }
@@ -5454,7 +5515,7 @@ index 211b725e5e..a3af4022fb 100644
              if (usable) {
                  return buffer_id;
              }
-@@ -1794,6 +1828,15 @@ BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
+@@ -1794,6 +1867,15 @@ BufferId BufferCache<P>::CreateBuffer(DAddr device_addr, u32 wanted_size,
      wanted_size = static_cast<u32>(device_addr_end - device_addr);
      const OverlapResult overlap = ResolveOverlaps(device_addr, wanted_size);
      const u32 size = static_cast<u32>(overlap.end - overlap.begin);
@@ -5470,7 +5531,7 @@ index 211b725e5e..a3af4022fb 100644
      const BufferId new_buffer_id =
          slot_buffers.insert(runtime, overlap.begin, size, sparse_compatible);
      auto& new_buffer = slot_buffers[new_buffer_id];
-@@ -2023,6 +2066,7 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
+@@ -2023,6 +2105,7 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
      struct Download {
          BufferId buffer_id;
          BufferCopy copy;
@@ -5478,7 +5539,7 @@ index 211b725e5e..a3af4022fb 100644
      };
      std::vector<Download> downloads;
      u64 total_size_bytes = 0;
-@@ -2047,10 +2091,36 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
+@@ -2047,10 +2130,36 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
      if (total_size_bytes == 0) {
          return;
      }
@@ -5515,7 +5576,7 @@ index 211b725e5e..a3af4022fb 100644
          buffer.MarkUsage(download.copy.src_offset, download.copy.size);
          runtime.CopyBuffer(download_staging.buffer, buffer, std::span{&download.copy, 1}, true);
      }
-@@ -2058,9 +2128,13 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
+@@ -2058,9 +2167,13 @@ void BufferCache<P>::DownloadBuffersMemory(std::span<const BufferId> buffer_ids)
      const u8* const mapped_memory = download_staging.mapped_span.data();
      for (const Download& download : downloads) {
          const DAddr device_addr = slot_buffers[download.buffer_id].CpuAddr() + download.copy.src_offset;
@@ -5532,7 +5593,7 @@ index 211b725e5e..a3af4022fb 100644
      }
  }
  
-@@ -2095,6 +2169,25 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
+@@ -2095,6 +2208,25 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
          return;
      }
  
@@ -5558,7 +5619,7 @@ index 211b725e5e..a3af4022fb 100644
      if constexpr (USE_MEMORY_MAPS) {
          auto download_staging = runtime.DownloadStagingBuffer(total_size_bytes);
          const u8* const mapped_memory = download_staging.mapped_span.data();
-@@ -2102,6 +2195,8 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
+@@ -2102,6 +2234,8 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
          for (BufferCopy& copy : copies) {
              // Modify copies to have the staging offset in mind
              copy.dst_offset += download_staging.offset;
@@ -5567,7 +5628,7 @@ index 211b725e5e..a3af4022fb 100644
              buffer.MarkUsage(copy.src_offset, copy.size);
          }
          runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
-@@ -2111,7 +2206,13 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
+@@ -2111,7 +2245,13 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
              // Undo the modified offset
              const u64 dst_offset = copy.dst_offset - download_staging.offset;
              const u8* copy_mapped_memory = mapped_memory + dst_offset;
