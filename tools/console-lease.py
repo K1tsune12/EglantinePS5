@@ -84,7 +84,15 @@ def main():
             print(json.dumps(dict(console_lease_notices=notices)), flush=True)
         try:
             # Keep the lease held by the experiment if its orchestrator exits.
-            return subprocess.call(command, pass_fds=(lock.fileno(),))
+            # subprocess.call kills its child when Ctrl-C interrupts wait(),
+            # which can cut off the experiment's restoration/finally handler.
+            with subprocess.Popen(command, pass_fds=(lock.fileno(),)) as child:
+                try:
+                    return child.wait()
+                except KeyboardInterrupt:
+                    # Terminal SIGINT already reaches the child process group.
+                    # Keep the lease while that child performs its cleanup.
+                    return child.wait()
         finally:
             owner.unlink(missing_ok=True)
 

@@ -60,6 +60,7 @@ cmake -S "$scratch/source" -B "$scratch/native-local" -G Ninja \
     -DCMAKE_C_COMPILER_LAUNCHER="$cache" -DCMAKE_CXX_COMPILER_LAUNCHER="$cache" \
     -DEDEN_DEV_ROM_ID="${EDEN_DEV_ROM_ID:-}" \
     -DEDEN_DEV_PROFILE="${EDEN_DEV_PROFILE:-OFF}" \
+    -DEDEN_MKW_DIAGNOSTICS="${EDEN_MKW_DIAGNOSTICS:-OFF}" \
     -DEDEN_DEV_PROFILE_TITLE="${EDEN_DEV_PROFILE_TITLE:-$(cat "$root/.local/dev-profile-title" 2>/dev/null || true)}" \
     -DEDEN_DEV_WAIT_CALLERS="${EDEN_DEV_WAIT_CALLERS:-OFF}" \
     -DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=ON \

@@ -1,6 +1,6 @@
 # Selevet core experiment for Mario Kart World on PS5
 
-Status: in progress. No Selevet gameplay FPS result is established yet.
+Status: experimental findings. No gameplay speedup or sustained 60 FPS is established.
 
 The experiment uses `sylvieistaken/selevet-eglantine` at
 `e902aca643b4abfb8217c5df5bf5b7e822962ef9`, in the separate
@@ -24,9 +24,11 @@ controls. Their defaults preserve the existing `custom` preset and LTO setting.
 | GPU mapping correctness | 200,000 randomized operations plus zero/overflow cases matched the original updates and effective ranges | Host differential test; includes explicit mappings and native leases |
 | GPU mapping benchmark | Original 111.667 µs/update; Selevet 3.09009 µs/update; 36.1× ratio | Synthetic host test with 1,024 mappings, 8,000 timed updates; not game FPS |
 | Core regression suite | 171 cases, 2,239,770 assertions passed | Header/helper host checks; not complete rendering validation |
-| Port source adaptation | Vulkan port generation passed | Does not establish successful native linking or console behavior |
+| Port reproduction | Clean checkout, root patch/gitlink, and all 131 modified/new core files reproduced | Optional snapshot; normal checkout keeps the existing default core |
 | Native candidate | Build, all required source checks, package inventory/alignment/import checks passed | Clang 18; custom CPU preset; LTO off; temporary MKW timing/native sampling off |
 | Sparse upload decoder | 11 cases, 565,112 assertions passed under ASan/UBSan | Actual decoder, including bounded sparse rectangle uploads |
+| Zen 2 tuning | Native build and package checks passed; generated configuration includes `-march=znver2 -mtune=znver2` | Host application compilation; not guest AArch64 recompilation |
+| ThinLTO | Native link, required checks, and packaging passed; core/frontend compile commands include `-flto=thin` | Existing Dynarmic-only ThinLTO remains in the baseline; this adds application/core IPO |
 | Bundled PGO profile | LLVM 18 and LLVM 21 reject its instrumentation format version | Cannot use the supplied LLVM 23 profile directly in the current port |
 | Existing installed build | MKW stopped after 303 seconds with `VK_ERROR_OUT_OF_DEVICE_MEMORY` | Observed before deploying Selevet; installed executable matched the other session's upload8 receipt |
 | First Selevet console run | Rendered title at about 4–5 FPS; `std::bad_alloc` on GPU thread after 394 seconds | No Free Roam measurement; no gameplay performance improvement established |
@@ -147,8 +149,9 @@ was preserved, and the rollback failure was posted to the shared mailbox.
 That prior session's upload12 also includes smaller guarded fiber stacks and a
 lower whole-image streaming threshold, beyond the upload11 sparse fix merged
 here. Comparisons must put those memory changes on a common baseline before
-attributing any difference to Selevet. The Zen 2 build is in progress; ThinLTO
-and same-scene console comparisons remain pending.
+attributing any difference to Selevet. Zen 2 and whole-application ThinLTO builds and packages now pass. Console
+loading failures prevent a controlled gameplay comparison; no gain is attributed
+to either compiler option.
 
 Compiler tuning cannot resolve an allocation failure by itself. A sustained
 60 FPS assessment needs bounded memory use and the cost of CPU translation,
@@ -156,27 +159,129 @@ GPU submission, synchronization/readback, and texture streaming measured in the
 same rendered scene. Unsafe semaphore/command shortcuts also need correctness
 checks; apparent FPS with stale work is not a valid result.
 
-## Console coordination and remaining work
+## Compiler and command-drain console trials
 
-`tools/console-lease.py run -- COMMAND` holds an OS advisory lock for a complete
-experiment. All local sessions must adopt the shared lock; older scripts can
-still bypass it. `status` tests the actual lock, and `note TEXT` appends to the
-shared findings mailbox. The lock file must not be deleted. Findings and an
-access notice were also placed in the original checkout.
+Each trial verified the candidate eboot hash and all 65 other installed package
+files, recorded a fresh process, preserved same-boot logs, and reviewed a live
+capture. Builds used Vulkan/RADV at the recorded common settings. These are
+startup/correctness results, not a gameplay tuning benchmark.
 
-Before drawing a console performance conclusion:
+| Variant | Fresh PID | Visible result | Bounded frame observation |
+| --- | --- | --- | --- |
+| Custom / LTO off, fork default | 530 | MKW 1.8.0 title and camera transition; later GPU-thread `std::bad_alloc` at 394 s | Title HUD around 4–5 FPS; no controlled gameplay interval |
+| Same eboot, `EDEN_NX2_COMMAND_DRAIN=1` | 535 | Loading map remained visible | Total held at 455; 0 new frames over 20.004 s |
+| Zen 2 / LTO off, fork default | 537 | Loading map remained visible | Total held at 501; 0 new frames over 20.004 s |
+| Custom / ThinLTO, fork default | 540 | App startup overlay at 98%, “Starting the game” | 0 presented game frames across 20.019 s |
 
-1. Finish the native build and required source/package checks, preserving a
-   matched ELF and source/settings receipt.
-2. Compare baseline and Selevet in the same MKW scene under the console lease,
-   with verified executable identity, fresh frames, viewed captures, and memory
-   and frame-time records.
-3. Measure Zen 2 tuning and ThinLTO separately; document the actual PGO route
-   or its demonstrated toolchain limitation.
-4. Complete game-function decompilation and correlate it with observed emulator
-   synchronization paths without treating static code as a runtime profile.
-5. Reproduce the maintained patch stack and publish the findings PR without
-   private game or console artifacts.
+The command-drain switch did not demonstrate a usable correctness workaround.
+The Zen 2 and ThinLTO trials did not qualify for same-scene gameplay timing.
+A single failed startup also does not isolate compiler code generation as the
+cause: runtime queue/memory state and remaining port adaptations need controlled
+repeats after stability work. Full identities, flags, and interval samples are
+in [`results.json`](../experiments/selevet-mkw/results.json).
+
+The later runner corrected both rollback handling and log collection: backup
+apps use the required `PPSA98515` directory, restoration checks the current
+remote hash, and a watcher preserves logs only when their boot markers match.
+The drain and Zen 2 trials restored the preceding executable and DEV settings
+with verified deployment receipts. The ThinLTO trial was stopped after its bounded no-frame observation. An
+interrupted launcher cut off its original cleanup; a fresh lease and executable
+hash guard then restored the prior executable/settings successfully. The shared
+helper now uses `Popen.wait` to let child cleanup finish on terminal SIGINT; a
+loopback process test confirmed the lease remains held throughout cleanup.
+The initial failed rollback remains part of the evidence above; it is not
+retroactively counted as successful.
+
+## Reproduce the optional port
+
+The normal PR checkout keeps the existing core. The complete experiment is
+saved as [`experiments/selevet-mkw/ps5-port.patch`](../experiments/selevet-mkw/ps5-port.patch).
+It includes the fork URL/gitlink, PS5 adaptation patch, and the captured local
+MKW compatibility baseline. Apply it in a separate clean checkout:
+
+```sh
+git apply --index experiments/selevet-mkw/ps5-port.patch
+git submodule sync -- Eglantine
+git submodule update --init -- Eglantine
+bash tools/apply-eglantine-patches.sh
+```
+
+This reconstruction was checked from a clean checkout; the nested patch
+reproduced all 131 changed/new core files byte for byte, including upstream
+CRLF line endings. The optional snapshot retains temporary MKW launch and
+loading probes from the captured baseline, including a forwarded-ROM adapter
+that targets MKW. It is investigation source, **not a release candidate**.
+It also changes the PS5 CPU page-table budget to 128 MiB. Do not interpret
+successful host checks as qualification of those experimental choices.
+
+Use the environment from the PS5 build procedure and failure-chain source
+synchronization with `tools/build-headless-native.sh --graphics`. Set one of:
+
+| Variant | Additional environment |
+| --- | --- |
+| Baseline | `EDEN_BUILD_PRESET=custom EDEN_NATIVE_LTO=OFF` |
+| Zen 2 | `EDEN_BUILD_PRESET=zen2 EDEN_NATIVE_LTO=OFF` |
+| ThinLTO | `EDEN_BUILD_PRESET=custom EDEN_NATIVE_LTO=ON` |
+| Matching PGO profile | `EDEN_PGO_PROFILE=/absolute/profile.profdata` |
+
+Keep `EDEN_DEV_PROFILE=OFF`, `EDEN_MKW_DIAGNOSTICS=OFF`, the same ROM ID,
+renderer, resolution, save, scene, and DEV settings. Archive the matched ELF
+before packaging another variant. The ThinLTO lock check inspects the actual
+`Core::DynarmicExclusiveMonitor::ClearExclusive` caller when IPO removes the
+standalone Dynarmic symbol; exchange acquisition/release, pause, full fence,
+and absence of runtime calls remain required.
+
+The mapping differential harness takes `REFERENCE_MAPPING_HEADER` naming the
+header from original core `3140648a668aaebf87bae2dea17512fdca125ba0`; compile
+with the fork's `src` and `externals` include paths. The fixed-seed correctness
+and timing workloads are in the public harness; timings must be remeasured on
+the reader's host.
+
+## Work toward 60 FPS
+
+60 FPS permits 16.67 ms per presented game frame. A title running near 4–5 FPS
+has roughly 200–250 ms between frames; the current evidence does not support
+compiler flags closing that gap. The immediate priorities are:
+
+1. **Make memory use bounded and execution stable.** Track live staging,
+   readback, texture, JIT, fiber, and host-heap backing separately. Preserve
+   failing request sizes and lifetimes. The 4 MiB sparse upload chunks alone
+   did not establish a fix; the first candidate still exhausted memory.
+2. **Resolve loading/queue correctness before timing gameplay.** Investigate
+   ordered readbacks, fence publication, command-page visibility, and the
+   loading stalls below. Preserve wake/error semantics and device-virtual
+   address meaning. The conservative command-drain switch is not a demonstrated
+   workaround.
+3. **Measure CPU/JIT and GPU costs in one sustained rendered scene.** Qualify
+   profiler arrays and named workers for all six Switch 2 cores first. Separate
+   guest execution, JIT compilation/cache clears, GPU submission, fence waits,
+   and texture decoding. A sampled run-exit PC or fast mapping microbenchmark
+   cannot identify the dominant frame cost.
+4. **Then repeat isolated mapping/Zen 2/ThinLTO comparisons.** Keep a common
+   memory baseline and use repeated warm runs with frame-time percentiles,
+   not only average FPS. Test mapping changes with captured workloads and
+   rendering checks, not only table equivalence.
+5. **Train PGO with the PS5 toolchain and representative work.** Build an
+   instrumented binary with the same compiler, arrange usable profile output
+   and runtime support on PS5, merge using its matching `llvm-profdata`, then
+   compare profile-use against an otherwise identical build. Include loading,
+   sustained Free Roam/racing, shader compilation, and synchronization. No PS5
+   training profile was collected in this experiment. The Windows LLVM 23
+   profile cannot be consumed by the qualified LLVM 18 build.
+
+The statically identified `WaitIfEqual64` ABI gap is a separate correctness
+candidate: prove runtime use, implement full-width/alignment behavior under
+the kernel scheduler, and add a comparison/wake regression before timing it.
+It is not evidence that this call caused the observed stalls.
+
+## Console coordination
+
+`tools/console-lease.py run --wait -- COMMAND` holds an OS advisory lock for a
+complete experiment and queues behind the active owner. All local sessions
+must adopt the shared lock; older scripts can bypass it. `status` tests the
+actual lock, and `note TEXT` appends to the shared findings mailbox. Findings
+and the helper were also shared with the original checkout. The lock files
+must not be deleted. See [CONSOLE_COORDINATION.md](../CONSOLE_COORDINATION.md).
 
 AI assistance: Codex performed the port adaptation, experiments, and report
 drafting. No human testing or sign-off is claimed.
