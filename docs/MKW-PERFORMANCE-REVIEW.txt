@@ -259,3 +259,66 @@ sustained stability or movement-input test. Original console files/settings
 and input controls were restored and verified. The 40 FPS goal remains open.
 Next distinguish buffer/texture/query fence requirements and the callers of
 runtime Finish before changing batching or guest completion ordering.
+
+Follow-up: fence requirements and smaller VMA blocks
+Run 1793661192786318025 adds diagnostic masks sampled before cache commits:
+texture=1, buffer=2, query=4. The real SignalFence/CommitCacheFlushes fixture
+passed all masks with immediate and delayed callbacks, empty skips, side-work
+stub fences and disabled counters. Runtime Finish attribution now preserves
+the cache wrapper's caller through Scheduler; TLS nesting/isolation passed.
+Representative 10-second windows had 5,579-8,361 buffer-only required fences,
+114-134 texture-only fences and no query-required fences. Many empty/stub
+fences remain under High GPU accuracy. Buffer downloads drive the real flushes.
+Buffer Finish calls resolve mainly to DownloadBufferMemory; texture Finish
+calls resolve mainly to TextureCache::DownloadMemory. This candidate exhausted
+device memory at 188 s, before Free Roam, with a 64 MiB largest free block.
+
+The next diagnostic candidate changes VMA's preferred large-heap block size
+from 64 to 16 MiB, retaining the separate 16 MiB decode pool. The normal port
+configuration still uses 64 MiB. Run 1793661938636368139 confirmed the active
+16 MiB setting, reached viewed snow Free Roam, and completed its observation
+without a crash. Ten complete frames measured 14.0979 FPS, 230.8 reads/frame,
+36.1441 ms frontend queue/frame and 0.3310 ms GPU wait API/frame. Copy-source
+streams were complete; GPU and CPU copies were 908,400 bytes/frame each.
+The kart/camera moved during this run, so it is not a stationary comparison.
+
+At 90 s the VMA map contained 1,492 MiB pooled backing, about 2,020 MiB
+dedicated backing and 29.32 MiB unused inside live blocks. At 150 s pooled
+backing was 1,412 MiB and unused-in-live rose to 565.09 MiB. Smaller blocks
+also change dedicated allocation selection: comparing only pooled backing
+would overstate savings. Largest free physical block was about 607 MiB at
+guest 170 s, but scenes differ from earlier runs. No controlled memory/FPS
+improvement or sustained stability is established.
+
+Follow-up: asynchronous buffer copy command batching
+The buffer cache can group consecutive regions from one source into commands
+of up to 32 regions, preserving the full region order and existing staging
+destinations, barriers and completion fence. The callback copies its span
+before return; Vulkan command recording owns its region vector. The opt-in
+experiment defaults off and has a same-process diagnostic control. A real-helper
+ASan/UBSan staging oracle covered 100,000 regions, A/B/A source changes and
+capacity/empty boundaries. Patch reproduction remains four patches/130 files.
+
+Run 1793662180141845273 used mode sequence 0,1,0,1 in one process at Mario
+Circuit. All four phase screenshots showed the same stationary kart/camera;
+NPC traffic varied. Each phase had ten complete ordered-read/copy frames.
+Twenty pooled baseline/batched frames per mode measured:
+  FPS:                         11.8429 / 11.8939
+  Ordered reads/frame:        230.9 / 226.15
+  Read-call CPU ms/frame:      53.1501 / 52.8968
+  Frontend queue ms/frame:     48.7112 / 48.5194
+  Backend queue ms/frame:       0.41129 / 0.40170
+  GPU wait API ms/frame:        0.32210 / 0.32278
+  GPU and CPU copy B/frame:    754300.8 / 751912.0
+Individual read-call median/p95/max were 0.025178/0.050196/49.216929 ms
+baseline and 0.025258/0.049475/48.514425 ms batched. CPU durations overlap.
+Mode-acknowledged interval counters confirmed 93,985 regions used 15,585
+commands (83.42% fewer); baseline regions used one command each. These counter
+intervals are longer than the trace windows. Command reduction did not establish
+a meaningful FPS or ordering-wait benefit; the experiment stays disabled.
+
+Latest diagnostic native build/package and focused checks passed. This run
+remained alive through the bounded comparison, with a 246 MiB largest free
+physical block at guest 300 s. It does not prove sustained stability. All three
+runs restored and verified the actual original console files/settings/input.
+The 40 FPS goal and release instrumentation check remain unresolved.
