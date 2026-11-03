@@ -520,6 +520,17 @@ int main(int argc, char** argv) {
         Eden::DevVulkan::gpu_time = true;
         Eden::DevVulkan::vma_block_mib = 16;
         Eden::DevVulkan::allocation_probe = true;
+        {
+            // Owned per-boot diagnostic input; immutable after renderer creation.
+            std::ifstream preload(Eden::AppFile("mkw-pipeline-preload-mode.txt"));
+            unsigned value{};
+            std::string trailing;
+            if ((preload >> value) && value <= 2 && !(preload >> trailing)) {
+                Eden::DevVulkan::pipeline_preload_mode = value;
+            }
+            Eden::BootTrace::Line("MKW pipeline preload mode=%u",
+                                 Eden::DevVulkan::pipeline_preload_mode);
+        }
         // Enable bounded readback probes for explicit diagnostic builds.
         setenv("EDEN_NX2_READBACK_DIAGNOSTICS", "1", 1);
         unsetenv("EDEN_NX2_PARTIAL_TEXTURE_READBACK");

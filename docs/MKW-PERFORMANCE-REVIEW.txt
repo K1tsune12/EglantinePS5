@@ -607,3 +607,98 @@ Startup logs also identify eager saved-pipeline construction: this run built
 confirms LoadDiskResources queues all saved pipeline entries and waits for them.
 Its retained-memory contribution and a read-only on-demand comparison remain
 unmeasured; no pipeline-preload behavior change is included here.
+
+Follow-up: read-only saved-pipeline preload comparison
+An opt-in per-boot diagnostic now isolates saved-pipeline construction from the
+driver's binary cache. MKW diagnostic builds read mkw-pipeline-preload-mode.txt
+before renderer creation: 0 retains normal behavior (the default), 1 prewarms
+saved pipelines with both cache files read-only, and 2 loads the driver binary
+cache but builds pipelines through the existing on-demand path. Other builds
+return mode 0. Unsupported input retains the default. No draw skipping, shader
+translation semantics, memory collection policy or driver code is changed.
+
+Read-only modes clear the serialization filenames after loading, preventing
+duplicate on-demand key appends and driver-cache writeback while retaining the
+in-memory driver cache handle. The core loaders and PS5 recovery reader also
+honor read-only input on invalid/truncated files; they neither delete nor repair
+comparison files. Normal recovery still preserves valid prefixes on PS5.
+
+The ASan/UBSan fixture extracts the actual LoadDiskResources flow, driver cache
+loader, destructor, core environment loader and PS5 recovery reader. It checks
+prewarm/demand selection, loaded driver bytes, task-pipeline rejection, callback
+and worker completion, empty serialization paths, invalid/truncated/missing
+files, read-only damaged tails and unchanged normal repair/removal. An initial
+native link exposed the port reader's old signature; no package was produced.
+The reader was updated and added to the fixture. Final native compile/link,
+focused checks and packaging passed; the expanded normal-repair fixture passed
+afterward. The release hot-path check remains unresolved and was explicitly
+opted out for this diagnostic build. Four patches now reproduce 135 core files.
+
+Candidate eboot SHA256:
+c81791b334461b5277bba516efbc57fcb9ece0bb48d52aa1832e2f6ec7494890
+Matched ELF SHA256:
+d3837140e96059cac3290700b5b80a1dd13274f290f8beec981b9d720889755a
+The Zortos gitlink and isolated RADV archive remained unchanged.
+
+Three fresh boots ran in order 1,2,1 under one console lease:
+  Run                    PID  Mode  Cache entries/ms  First frame s
+  1793672940776945132     740     1       3140 / 2834       65.8418
+  1793673278775299901     741     2          0 /  400       65.7529
+  1793673766536183306     742     1       3140 / 2551       67.3009
+First frame is the first rendering callback, not title-ready time. These single
+boot observations show no established first-frame improvement. Both persisted
+files had identical hashes across all boots and before/after each boot:
+  vulkan.bin: 82,035,596 bytes
+  fd490676802dec17ff61eafec43954be5049e32725e810fd1812ed2a7123983e
+  vulkan_pipelines.bin: 24,951,740 bytes
+  c0c2676d2007e6b75aec98d05e8b98c550e4d2844ca61e45bb3a7f8d2ee715a7
+Logs confirm the driver binary loaded in every mode. Demand mode's reported
+runtime pipeline intervals totaled 936 builds and 2,235.9 ms on the GPU thread,
+versus 24/26.7 ms and 27/30.4 ms in the two prewarm runs. These are accumulated
+reported intervals of different run lengths, excluding any final unreported
+interval, not normalized per-frame costs. Construction moved into gameplay.
+
+The cross-boot Free Roam scenes were NOT matched. GPT-6.1 Terra found the first
+baseline at a road edge beside a red barrier and blue DK Boosters pipe, demand
+mode in desert dunes with flags/pillars, and the return baseline on a curving
+road near blue buildings and trees. Title/menu timing does not establish a
+repeatable Free Roam location. Accordingly the following are observations only,
+not an A/B FPS, wait-count, copy or memory benefit/regression claim. Each boot
+has two complete ten-frame read/copy streams; snapshots, semaphore bypass,
+producer waiting, copy batching and selective notifications stayed off:
+  PID                         740         741         742
+  Observed FPS              12.9771     13.3935     13.2184
+  Ordered reads/frame      221.55      253.65      211.45
+  Reads over 5 ms           20          20          20
+  Front queue CPU ms/f      44.9604     40.3261     41.5024
+  Backend queue CPU ms/f     0.3903      0.4475      0.3762
+  GPU wait API CPU ms/f      0.3297      0.3188      0.3330
+  GPU staging B/f       686528.0    1014341.6    722026.4
+  CPU buffer copy B/f   747712.0    1059141.6    775018.4
+  Direct mapped B/f      61184.0      44800.0     52992.0
+  Command snapshot B/f       0            0           0
+Individual read-call median/p95/max ms:
+  PID 740: 0.024858 / 0.043541 / 43.946342
+  PID 741: 0.024537 / 0.041697 / 42.323950
+  PID 742: 0.024937 / 0.042899 / 41.322113
+One long read per frame remains. CPU intervals overlap across threads.
+
+All twelve pool probes were complete/stable/consistent. Free Roam observations
+in chronological boot order were total-free/largest/VMA-live MiB:
+  1147.69 / 356.38 / 3226.78
+   464.39 / 244.06 / 3609.31
+   412.89 / 164.00 / 3465.72
+Different locations and elapsed streaming invalidate a controlled memory-saving
+claim. The reserve held 512 MiB and memory-short remained true. No collection
+threshold is relaxed. Terra found plausible rendering in each boot and matching
+stationary kart/landmarks within each boot's measurement captures; traffic and,
+in the final run, sunset lighting changed. This does not prove movement or
+sustained stability. All owned executable/metadata/settings/input files were
+restored and verified before lease release. Mode 2 remains a diagnostic option;
+normal prewarming remains the default. The 40 FPS objective is not achieved.
+
+Next comparison must explicitly select one fixed Free Roam location/camera
+before measurement, rather than rely on the title shortcut. A private controller
+runner with bounded commands and fresh captures at a navigation gate has been
+prepared for that purpose; it has only passed Python syntax checks, not console
+navigation validation yet.

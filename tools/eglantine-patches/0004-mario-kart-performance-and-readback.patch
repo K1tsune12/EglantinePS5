@@ -8241,7 +8241,7 @@ index 9ca215b425..a6c05ef989 100644
  
  static constexpr VkPipelineStageFlags wait_stage_mask = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
 diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
-index 4f0155fa54..d21be2c424 100644
+index 4f0155fa54..a0239e5187 100644
 --- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
 +++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
 @@ -1,3 +1,4 @@
@@ -8249,7 +8249,16 @@ index 4f0155fa54..d21be2c424 100644
  // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
  // SPDX-License-Identifier: GPL-3.0-or-later
  
-@@ -310,6 +311,14 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
+@@ -55,6 +56,8 @@
+ #include "../../android/app/src/main/jni/android_settings.h"
+ #endif
+ 
++extern "C" unsigned eden_pipeline_preload_mode() __attribute__((weak));
++
+ namespace Vulkan {
+ 
+ namespace {
+@@ -310,6 +313,14 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
      } else {
          info.previous_stage_stores.mask.set();
      }
@@ -8264,7 +8273,7 @@ index 4f0155fa54..d21be2c424 100644
      const Shader::Stage stage{program.stage};
      const bool has_geometry{key.unique_hashes[4] != 0 && !programs[4].is_geometry_passthrough};
      const float point_size{std::bit_cast<float>(key.point_size)};
-@@ -329,6 +338,9 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
+@@ -329,6 +340,9 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
          info.tess_primitive = key.tess_primitive;
          info.tess_spacing = key.tess_spacing;
          break;
@@ -8274,7 +8283,7 @@ index 4f0155fa54..d21be2c424 100644
      case Shader::Stage::Geometry:
          if (program.output_topology == Shader::OutputTopology::PointList) {
              info.fixed_state_point_size = point_size;
-@@ -459,7 +471,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
+@@ -459,7 +473,9 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                             Shader::Stage::TessellationEval) |
          subgroup_stage_bit(VK_SHADER_STAGE_GEOMETRY_BIT, Shader::Stage::Geometry) |
          subgroup_stage_bit(VK_SHADER_STAGE_FRAGMENT_BIT, Shader::Stage::Fragment) |
@@ -8285,7 +8294,7 @@ index 4f0155fa54..d21be2c424 100644
      if (driver_id == VK_DRIVER_ID_MESA_TURNIP) {
          supported_subgroup_stages &= ~(1u << static_cast<u32>(Shader::Stage::Geometry));
      }
-@@ -655,11 +669,14 @@ PipelineCache::~PipelineCache() {
+@@ -655,11 +671,14 @@ PipelineCache::~PipelineCache() {
  }
  
  GraphicsPipeline* PipelineCache::CurrentGraphicsPipeline() {
@@ -8300,7 +8309,37 @@ index 4f0155fa54..d21be2c424 100644
  
      if (current_pipeline) {
          GraphicsPipeline* const next{current_pipeline->Next(graphics_key)};
-@@ -762,6 +779,15 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
+@@ -707,6 +726,9 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
+     if (title_id == 0) {
+         return;
+     }
++    const unsigned requested_mode = eden_pipeline_preload_mode ? eden_pipeline_preload_mode() : 0;
++    const unsigned preload_mode = requested_mode <= 2 ? requested_mode : 0;
++    const bool read_only = preload_mode != 0;
+     if (!pipeline_cache_filename.empty()) {
+         serialization_thread.WaitForRequests();
+         if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
+@@ -726,7 +748,18 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
+     if (use_vulkan_pipeline_cache) {
+         vulkan_pipeline_cache_filename = base_dir / "vulkan_pipelines.bin";
+         vulkan_pipeline_cache =
+-            LoadVulkanPipelineCache(vulkan_pipeline_cache_filename, CACHE_VERSION);
++            LoadVulkanPipelineCache(vulkan_pipeline_cache_filename, CACHE_VERSION, !read_only);
++    }
++
++    LOG_INFO(Render_Vulkan, "Pipeline preload mode {} (disk read-only: {})", preload_mode, read_only);
++    if (preload_mode == 2) {
++        // Retain the loaded driver binary cache for normal on-demand compilation.
++        // Empty paths disable runtime appends and driver-cache writes, preventing
++        // duplicate keys or changes to the cache used by the comparison baseline.
++        pipeline_cache_filename.clear();
++        vulkan_pipeline_cache_filename.clear();
++        callback(VideoCore::LoadCallbackStage::Build, 0, 0);
++        return;
+     }
+ 
+     struct {
+@@ -762,6 +795,15 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
          GraphicsPipelineCacheKey key;
          file.read(reinterpret_cast<char*>(&key), sizeof(key));
  
@@ -8316,7 +8355,29 @@ index 4f0155fa54..d21be2c424 100644
          if ((key.state.extended_dynamic_state != 0) !=
                  dynamic_features.has_extended_dynamic_state ||
              (key.state.extended_dynamic_state_2 != 0) !=
-@@ -1088,7 +1114,9 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
+@@ -811,7 +853,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
+         ++state.total;
+     }};
+     VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, CACHE_VERSION, load_compute,
+-                               load_graphics);
++                               load_graphics, !read_only);
+ 
+     LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
+ 
+@@ -822,7 +864,11 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
+ 
+     workers.WaitForRequests(stop_loading);
+ 
+-    if (use_vulkan_pipeline_cache) {
++    if (read_only) {
++        pipeline_cache_filename.clear();
++        vulkan_pipeline_cache_filename.clear();
++    }
++    if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
+         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
+                                      CACHE_VERSION);
+         size_t size = 0;
+@@ -1088,7 +1134,9 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
          ++env_index;
  
          const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
@@ -8326,7 +8387,7 @@ index 4f0155fa54..d21be2c424 100644
          if (!uses_vertex_a || index != 1) {
              // Normal path
              programs[index] = TranslateProgram(pools.inst, pools.block, env, cfg, host_info);
-@@ -1130,11 +1158,15 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
+@@ -1130,11 +1178,15 @@ std::shared_ptr<ReusableShaders> PipelineCache::BuildGraphicsShaders(
          const size_t stage_index{index - 1};
          infos[stage_index] = &program.info;
  
@@ -8342,7 +8403,7 @@ index 4f0155fa54..d21be2c424 100644
  
          // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump
          // is independent and gated only by gpu_log_shader_dumps.
-@@ -1305,6 +1337,13 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipelineFromReuse
+@@ -1305,6 +1357,13 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipelineFromReuse
  
  void PipelineCache::SerializeGraphicsPipeline(const GraphicsPipelineCacheKey& key,
                                                GraphicsEnvironmentArray envs) {
@@ -8356,6 +8417,60 @@ index 4f0155fa54..d21be2c424 100644
      serialization_thread.QueueWork([this, key, envs = std::move(envs)] {
          boost::container::static_vector<const GenericEnvironment*, Maxwell::MaxShaderProgram>
              env_ptrs;
+@@ -1564,7 +1623,8 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
+ }
+ 
+ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::path& filename,
+-                                                         u32 expected_cache_version) {
++                                                         u32 expected_cache_version,
++                                                         bool allow_file_removal) {
+     const auto create_pipeline_cache = [this](size_t data_size, const void* data) {
+         VkPipelineCacheCreateInfo pipeline_cache_ci = {
+             .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+@@ -1589,15 +1649,17 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
+         // below, and macOS's libc++ throws an ios_base::failure the handler doesn't match.
+         if (static_cast<size_t>(end) < magic_number.size() + sizeof(cache_version)) {
+             file.close();
+-            LOG_ERROR(Common_Filesystem, "Truncated Vulkan driver pipeline cache file, deleting it");
+-            Common::FS::RemoveFile(filename);
++            LOG_ERROR(Common_Filesystem, "Truncated Vulkan driver pipeline cache file");
++            if (allow_file_removal) Common::FS::RemoveFile(filename);
+             return create_pipeline_cache(0, nullptr);
+         }
+         file.read(magic_number.data(), magic_number.size())
+             .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
+         if (magic_number != VULKAN_CACHE_MAGIC_NUMBER || cache_version != expected_cache_version) {
+             file.close();
+-            if (Common::FS::RemoveFile(filename)) {
++            if (!allow_file_removal) {
++                LOG_WARNING(Common_Filesystem, "Invalid read-only Vulkan driver cache; ignoring it");
++            } else if (Common::FS::RemoveFile(filename)) {
+                 if (magic_number != VULKAN_CACHE_MAGIC_NUMBER) {
+                     LOG_ERROR(Common_Filesystem, "Invalid Vulkan driver pipeline cache file");
+                 }
+@@ -1624,7 +1686,7 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
+ 
+     } catch (const std::ios_base::failure& e) {
+         LOG_ERROR(Common_Filesystem, "{}", e.what());
+-        if (!Common::FS::RemoveFile(filename)) {
++        if (allow_file_removal && !Common::FS::RemoveFile(filename)) {
+             LOG_ERROR(Common_Filesystem, "Failed to delete Vulkan driver pipeline cache file {}",
+                       Common::FS::PathToUTF8String(filename));
+         }
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.h b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+index 9d08b8bdcb..a607748c28 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.h
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+@@ -205,7 +205,8 @@ private:
+                                       const vk::PipelineCache& pipeline_cache, u32 cache_version);
+ 
+     vk::PipelineCache LoadVulkanPipelineCache(const std::filesystem::path& filename,
+-                                              u32 expected_cache_version);
++                                              u32 expected_cache_version,
++                                              bool allow_file_removal = true);
+ 
+     void QueueVulkanPipelineCacheFlush();
+ 
 diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.cpp b/src/video_core/renderer_vulkan/vk_rasterizer.cpp
 index 7eb6456821..cec35d9715 100644
 --- a/src/video_core/renderer_vulkan/vk_rasterizer.cpp
@@ -9504,7 +9619,7 @@ index 0e7f40ed10..6985f96c3b 100644
      mutable std::mutex lookup_mutex;
      std::mutex invalidation_mutex;
 diff --git a/src/video_core/shader_environment.cpp b/src/video_core/shader_environment.cpp
-index eafa778883..09a4491362 100644
+index eafa778883..0f040d83fa 100644
 --- a/src/video_core/shader_environment.cpp
 +++ b/src/video_core/shader_environment.cpp
 @@ -477,7 +477,7 @@ std::shared_ptr<const LoweredNativeCode> GenericEnvironment::LowerNativeCode(u32
@@ -9554,6 +9669,49 @@ index eafa778883..09a4491362 100644
              if (std::getenv("EDEN_NX2_SHADER_DUMP")) {
                  InitializeNativeCode(nullptr);
              }
+@@ -1098,7 +1118,8 @@ void SerializePipeline(std::span<const char> key, std::span<const GenericEnviron
+ void LoadPipelines(
+     std::stop_token stop_loading, const std::filesystem::path& filename, u32 expected_cache_version,
+     Common::UniqueFunction<void, std::ifstream&, FileEnvironment> load_compute,
+-    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics) try {
++    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics,
++    bool allow_file_removal) try {
+     std::ifstream file(filename, std::ios::binary | std::ios::ate);
+     if (!file.is_open()) {
+         return;
+@@ -1113,7 +1134,9 @@ void LoadPipelines(
+         .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
+     if (magic_number != MAGIC_NUMBER || cache_version != expected_cache_version) {
+         file.close();
+-        if (Common::FS::RemoveFile(filename)) {
++        if (!allow_file_removal) {
++            LOG_WARNING(Common_Filesystem, "Invalid read-only pipeline cache; ignoring it");
++        } else if (Common::FS::RemoveFile(filename)) {
+             if (magic_number != MAGIC_NUMBER) {
+                 LOG_ERROR(Common_Filesystem, "Invalid pipeline cache file");
+             }
+@@ -1146,7 +1169,7 @@ void LoadPipelines(
+ 
+ } catch (const std::ios_base::failure& e) {
+     LOG_ERROR(Common_Filesystem, "{}", e.what());
+-    if (!Common::FS::RemoveFile(filename)) {
++    if (allow_file_removal && !Common::FS::RemoveFile(filename)) {
+         LOG_ERROR(Common_Filesystem, "Failed to delete pipeline cache file {}",
+                   Common::FS::PathToUTF8String(filename));
+     }
+diff --git a/src/video_core/shader_environment.h b/src/video_core/shader_environment.h
+index 2fd3b1b87b..eda7385da6 100644
+--- a/src/video_core/shader_environment.h
++++ b/src/video_core/shader_environment.h
+@@ -308,6 +308,7 @@ void SerializePipeline(const Key& key, const Envs& envs, const std::filesystem::
+ 
+ void LoadPipelines(std::stop_token stop_loading, const std::filesystem::path& filename, u32 expected_cache_version,
+     Common::UniqueFunction<void, std::ifstream&, FileEnvironment> load_compute,
+-    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics);
++    Common::UniqueFunction<void, std::ifstream&, std::vector<FileEnvironment>> load_graphics,
++    bool allow_file_removal = true);
+ 
+ } // namespace VideoCommon
 diff --git a/src/video_core/submitted_commands.h b/src/video_core/submitted_commands.h
 new file mode 100644
 index 0000000000..8965b9dd3e

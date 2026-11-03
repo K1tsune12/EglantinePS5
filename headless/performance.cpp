@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "performance.h"
+#include "dev_vulkan.h"
 #include "direct_pool_probe.h"
 #include "device_allocation_probe.h"
 #include "crash_report.h"
@@ -1258,6 +1259,15 @@ extern "C" void eden_jit_compile(unsigned core, unsigned long long ns) {
     if (core >= Eden::Performance::compilation.size()) return;
     Eden::Performance::compilation[core].calls.fetch_add(1, std::memory_order_relaxed);
     Eden::Performance::compilation[core].nanoseconds.fetch_add(ns, std::memory_order_relaxed);
+}
+
+// Set once before renderer creation; normal builds keep the original cache policy.
+extern "C" unsigned eden_pipeline_preload_mode() {
+#ifdef EDEN_MKW_DIAGNOSTICS
+    return Eden::DevVulkan::pipeline_preload_mode;
+#else
+    return 0;
+#endif
 }
 
 extern "C" void eden_vma_device_memory_event(unsigned type, unsigned long long bytes, int allocated) {
