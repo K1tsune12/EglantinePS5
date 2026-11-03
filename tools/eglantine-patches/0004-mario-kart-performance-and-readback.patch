@@ -8937,17 +8937,64 @@ index 979dad502c..713e472dd5 100644
          std::array<u32, 3> workgroup_size;
          Shader::Stage stage;
          u32 start_address;
+diff --git a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
+index 7b6571d33d..b8b42c93b9 100644
+--- a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
++++ b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
+@@ -20,6 +20,11 @@
+ #include "video_core/vulkan_common/vulkan_device.h"
+ #include "video_core/vulkan_common/vulkan_wrapper.h"
+ 
++#ifdef PS5_NATIVE
++extern "C" void eden_staging_failure(unsigned long long, unsigned, unsigned, int,
++                                      const void*, unsigned) __attribute__((weak));
++#endif
++
+ namespace Vulkan {
+ namespace {
+ 
+@@ -101,10 +106,26 @@ StagingBufferPool::StagingBufferPool(const Device& device_, MemoryAllocator& mem
+ StagingBufferPool::~StagingBufferPool() = default;
+ 
+ StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool deferred) {
++#ifdef PS5_NATIVE
++    try {
++#endif
+     if (!deferred && usage == MemoryUsage::Upload && size <= region_size) {
+         return GetStreamBuffer(size);
+     }
+     return GetStagingBuffer(size, usage, deferred);
++#ifdef PS5_NATIVE
++    } catch (const vk::Exception& error) {
++        // Only the immediate return address is used: no frame-pointer walk or
++        // successful-request logging on the staging hot path. Resolve against
++        // the deployed artifact's matched ELF and its actual load bias.
++        if (eden_staging_failure) {
++            eden_staging_failure(size, static_cast<unsigned>(usage), unsigned(deferred),
++                                 static_cast<int>(error.GetResult()),
++                                 __builtin_return_address(0), 0);
++        }
++        throw;
++    }
++#endif
+ }
+ 
+ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
 diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
-index 89e4c11484..5a6673be52 100644
+index 89e4c11484..60fa9223c1 100644
 --- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
 +++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
-@@ -1,3 +1,5 @@
+@@ -1,3 +1,9 @@
 +#include <cstdio>
 +#include <unistd.h>
++#ifdef PS5_NATIVE
++extern "C" void eden_staging_failure(unsigned long long, unsigned, unsigned, int,
++                                      const void*, unsigned) __attribute__((weak));
++#endif
  // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
  // SPDX-License-Identifier: GPL-3.0-or-later
  
-@@ -38,6 +40,7 @@
+@@ -38,6 +44,7 @@
  #include "video_core/texture_cache/samples_helper.h"
  #include "video_core/texture_cache/util.h"
  #include "video_core/vulkan_common/vulkan_device.h"
@@ -8955,7 +9002,7 @@ index 89e4c11484..5a6673be52 100644
  #include "video_core/vulkan_common/vulkan_memory_allocator.h"
  #include "video_core/vulkan_common/vulkan_wrapper.h"
  #include "video_core/textures/decoders.h"
-@@ -172,7 +175,10 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
+@@ -172,7 +179,10 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
  // A large image over Switch 2 sparse blocks nobody has written (title 1's terrain layer pools, 2.9
  // GB of R8/RG16/R16 that stay empty in the attract demo) is all zeros: it gets no device memory
  // until a write makes the texture cache replace it.
@@ -8967,7 +9014,7 @@ index 89e4c11484..5a6673be52 100644
      constexpr u32 MinSize = 32U << 20;
      const u32 size = VideoCommon::CalculateGuestSizeInBytes(info);
      return size >= MinSize && info.type != ImageType::e1D && info.type != ImageType::Buffer &&
-@@ -184,7 +190,8 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
+@@ -184,7 +194,8 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
  // Image::BindLayers. Only formats uploaded layer by layer: huge ASTC arrays (GPU decode) and
  // formats the host samples as they are.
  [[nodiscard]] bool UsesSparseLayers(const Device& device, const ImageInfo& info, GPUVAddr gpu_addr) {
@@ -8977,7 +9024,7 @@ index 89e4c11484..5a6673be52 100644
          info.resources.layers <= 1 || info.num_samples != 1 ||
          VideoCore::Surface::GetFormatType(info.format) != VideoCore::Surface::SurfaceType::ColorTexture) {
          return false;
-@@ -197,6 +204,32 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
+@@ -197,6 +208,32 @@ constexpr VkBorderColor ConvertBorderColor(const std::array<float, 4>& color) {
      return layer_uploads && size >= (32U << 20) && Tegra::Nx2InSparseRegion(gpu_addr, size);
  }
  
@@ -9010,7 +9057,7 @@ index 89e4c11484..5a6673be52 100644
  // The most device memory one SparseLayers image binds: 768 MiB, 384 MiB on GPUs with less than
  // 7 GiB (title 1's BC6H arrays are 85 MB a layer).
  [[nodiscard]] VkDeviceSize SparseLayersCap(const Device& device) {
-@@ -1193,6 +1226,10 @@ void TextureCacheRuntime::Finish() {
+@@ -1193,7 +1230,24 @@ void TextureCacheRuntime::Finish() {
  }
  
  StagingBufferRef TextureCacheRuntime::UploadStagingBuffer(size_t size, bool deferred) {
@@ -9018,10 +9065,24 @@ index 89e4c11484..5a6673be52 100644
 +        LOG_WARNING(Render_Vulkan, "MKW_UPLOAD_SOURCE size={} deferred={} caller={:#x}", size,
 +                    deferred, reinterpret_cast<std::uintptr_t>(__builtin_return_address(0)));
 +    }
++#ifdef PS5_NATIVE
++    try {
++        return staging_buffer_pool.Request(size, MemoryUsage::Upload, deferred);
++    } catch (const vk::Exception& error) {
++        if (eden_staging_failure) {
++            eden_staging_failure(size, static_cast<unsigned>(MemoryUsage::Upload),
++                                 unsigned(deferred), static_cast<int>(error.GetResult()),
++                                 __builtin_return_address(0), 1);
++        }
++        throw;
++    }
++#else
      return staging_buffer_pool.Request(size, MemoryUsage::Upload, deferred);
++#endif
  }
  
-@@ -2132,7 +2169,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
+ StagingBufferRef TextureCacheRuntime::DownloadStagingBuffer(size_t size, bool deferred) {
+@@ -2132,7 +2186,8 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
                                     : runtime->ViewFormats(info.format),
                                 AstcHostFormat(runtime_.device, info),
                                 UsesSparseLayers(runtime_.device, info, gpu_addr_) ||
@@ -9031,7 +9092,7 @@ index 89e4c11484..5a6673be52 100644
        aspect_mask(ImageAspectMask(info.format)) {
      if (original_image.IsUnbacked()) {
          flags |= VideoCommon::ImageFlagBits::Unbacked;
-@@ -2141,6 +2179,18 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
+@@ -2141,6 +2196,18 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
                             host_info.size.depth * static_cast<u64>(host_info.resources.layers);
          if (UsesSparseLayers(runtime_.device, info, gpu_addr_) && InitSparseLayers()) {
              flags |= VideoCommon::ImageFlagBits::SparseLayers;
@@ -9050,7 +9111,7 @@ index 89e4c11484..5a6673be52 100644
          } else if (texels <= (u64{1} << 28)) {
              // Not too big to back (see MemoryAllocator::CreateImage): unbacked because nothing
              // was written there yet, so the first write gets it replaced.
-@@ -2672,6 +2722,186 @@ bool Image::InitSparseLayers() {
+@@ -2672,6 +2739,186 @@ bool Image::InitSparseLayers() {
      return true;
  }
  
@@ -9237,7 +9298,7 @@ index 89e4c11484..5a6673be52 100644
  std::vector<u32> Image::BindLayers(std::span<const u32> layers) {
      SparseLayerMemory& s = sparse_layers;
      std::vector<u32> bound;
-@@ -3697,6 +3927,18 @@ void TextureCacheRuntime::AccelerateImageUploadLayers(
+@@ -3697,6 +3944,18 @@ void TextureCacheRuntime::AccelerateImageUploadLayers(
  void TextureCacheRuntime::TranscodeAstcToBcn(
      Image& image, const StagingBufferRef& map,
      std::span<const VideoCommon::SwizzleParameters> swizzles) {
@@ -9256,7 +9317,7 @@ index 89e4c11484..5a6673be52 100644
      const ImageInfo& info = image.info;
      // The host image may hold only the guest levels from host_level_offset on (TrimmedHostInfo):
      // the staging data and swizzles then start at that level, and host level 0 is that level.
-@@ -3719,7 +3961,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
+@@ -3719,7 +3978,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
              .format = DecodeFormat,
              .extent = {width, height, 1},
              .mipLevels = levels,
@@ -9265,7 +9326,7 @@ index 89e4c11484..5a6673be52 100644
              .samples = VK_SAMPLE_COUNT_1_BIT,
              .tiling = VK_IMAGE_TILING_OPTIMAL,
              .usage = VK_IMAGE_USAGE_STORAGE_BIT,
-@@ -3734,18 +3976,9 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
+@@ -3734,18 +3993,9 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
          pending.views.push_back(
              MakeStorageView(device.GetLogical(), level, *pending.image, DecodeFormat));
      }
@@ -9286,7 +9347,7 @@ index 89e4c11484..5a6673be52 100644
      const bool bc3 = !IsOpaqueBc1Astc(device, info) &&
                       Settings::GetAstcRecompression() != Settings::AstcRecompression::Bc1;
      const u64 block_bytes = bc3 ? 16 : 8;
-@@ -3756,7 +3989,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
+@@ -3756,7 +4006,7 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
          const u32 level_height = (std::max)(height >> level, 1U);
          const u32 blocks_x = Common::DivCeil(level_width, 4U);
          const u32 blocks_y = Common::DivCeil(level_height, 4U);
@@ -9295,7 +9356,7 @@ index 89e4c11484..5a6673be52 100644
          copies.push_back({
              .buffer_offset = total,
              .buffer_size = size,
-@@ -3765,30 +3998,78 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
+@@ -3765,30 +4015,78 @@ void TextureCacheRuntime::TranscodeAstcToBcn(
              .image_subresource{
                  .base_level = static_cast<s32>(level),
                  .base_layer = 0,

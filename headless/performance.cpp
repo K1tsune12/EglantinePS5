@@ -1307,4 +1307,14 @@ extern "C" void eden_vma_buffer_failure(unsigned long long bytes, unsigned usage
 #endif
 }
 
+extern "C" void eden_staging_failure(unsigned long long bytes, unsigned usage, unsigned deferred,
+                                       int result, const void* caller, unsigned texture_upload) {
+#if defined(PS5_NATIVE) && defined(EDEN_MKW_DIAGNOSTICS)
+    std::fprintf(stderr, "MKW_STAGING_SOURCE bytes=%llu usage=%u deferred=%u result=%d caller=%p texture_upload=%u\n",
+                 bytes, usage, deferred, result, caller, texture_upload);
+#else
+    (void)bytes; (void)usage; (void)deferred; (void)result; (void)caller; (void)texture_upload;
+#endif
+}
+
 #include "ordered_read_trace.inc"
