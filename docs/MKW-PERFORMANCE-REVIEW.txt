@@ -6,7 +6,8 @@ instrumentation, as requested. The core remains Zortos 3140648a668aaebf87bae2dea
 Maintained patch 0004 is incremental over the existing three patches; patch
 0005 bounds shader-module retention after pipeline compilation, 0006 adds the
 opt-in command-fetch frontier experiment, and 0007 records oversized-index
-provenance on failure. All seven maintained patches reproduce 142 core files. The
+provenance on failure. Patch 0008 extends the experimental frontier to compute
+store-only writes; eight maintained patches reproduce 143 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
@@ -14,8 +15,9 @@ Current build status: the six-patch normal and MKW diagnostic configurations
 passed all required native checks/build/link/package without
 EDEN_SKIP_SOURCE_CHECKS; the seven-patch normal-input provenance configuration
 also passed that full chain. Each passed 179 core cases / 2,239,932 assertions.
-The seven-patch diagnostic configuration has not been rebuilt. The earlier
-release CPU instrumentation failure recorded below is resolved. Recent
+The seven-patch diagnostic configuration was not rebuilt separately; both
+subsequent eight-patch configurations passed the full chain as recorded below.
+The earlier release CPU instrumentation failure recorded below is resolved. Recent
 diagnostic attempts found staging failures both during Crown City travel and before opening the
 world map. A module-budget test reached the map but hit a private navigation
 runner bug; its corrected retry failed on a malformed index-buffer request.
