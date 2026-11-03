@@ -322,3 +322,53 @@ remained alive through the bounded comparison, with a 246 MiB largest free
 physical block at guest 300 s. It does not prove sustained stability. All three
 runs restored and verified the actual original console files/settings/input.
 The 40 FPS goal and release instrumentation check remain unresolved.
+
+Follow-up: larger mapped buffers and producer-specific waits
+Complete traces identified three repeatedly read synchronous source buffers,
+including one of 11,468,800 bytes. The experimental allocation policy now admits
+frequently read non-sparse buffers up to 16 MiB, with a 64 MiB live mapped budget;
+writer tracking remains bounded to 256 allocations and 64 segments/allocation.
+Default driver type 0 has flags 1 and cannot legally be mapped; eligible buffers
+are promoted to coherent host-visible type 5. No guest RAM is imported.
+
+An opt-in readback path captures range tickets, waits for their maximum producer
+tick and rechecks allocation/epoch/version before copying mapped bytes. Unknown,
+sparse, external, remapped or stale writers retain staging. Future ticks and
+more than 32 copy ranges reject. It keeps the existing HOST_READ visibility
+barrier. The real-method ASan/UBSan fixture passed current/earlier/completed
+producer cases, unrelated-range writes, failed waits, remaps and stale tickets.
+Updated allocation/writer lifetime fixtures and patch reproduction also passed.
+
+Run 1793664191502658358 confirmed the 11 MiB mapped type-5 allocation. The
+explicit ten-frame validation compared 830,720 bytes with staging, with zero
+mismatches; cumulative validation during the run checked 67,193,296 bytes with
+zero failures. This is evidence for the exercised ranges and driver. Title,
+menu, validation, Free Roam and all four comparison captures were viewed.
+
+The same-process stationary Mario Circuit comparison used direct mapped reads
+throughout, with producer-wait mode 0,1,0,1 and copy batching off. All four
+ten-frame read/copy streams were complete. Twenty pooled frames per mode:
+  FPS:                         12.6001 / 12.6584
+  Ordered reads/frame:        228.15 / 220.65
+  Read-call CPU ms/frame:      48.8163 / 48.6524
+  Frontend queue ms/frame:     44.4780 / 44.4431
+  GPU wait API ms/frame:        0.33231 / 0.32080
+  GPU staging B/frame:         631237.6 / 605102.4
+  CPU copy B/frame:            692421.6 / 688174.4
+  Direct mapped B/frame:      61184 / 83072
+Individual read-call median/p95/max were 0.025017/0.046187/43.502836 ms off
+and 0.024858/0.047630/43.092447 ms on. Each mode still had twenty reads over
+5 ms: one per frame. CPU totals overlap; short windows and NPC variation limit
+the count/FPS comparison. No meaningful FPS or ordering-wait benefit was shown.
+
+All 4,060 observed producer-wait calls targeted the current submission tick;
+none targeted an earlier submitted tick. The implementation therefore still
+flushes the current command buffer. Range tracking at submission granularity
+cannot exclude later work within that same command buffer. Copy reduction is
+not an ordering reduction; producer waiting stays disabled by default.
+
+The final diagnostic native build/package passed. An earlier build stopped on
+the expected wait-site count changing from six to seven and was not packaged.
+This bounded run completed without a fresh crash, with about 484 MiB as the
+largest free physical block at guest 250 s. Sustained stability and 40 FPS
+remain unproven. Original console files/settings/input were restored and verified.
