@@ -747,13 +747,42 @@ controls were restored and hash verified; exact original preference bytes
 were restored, SHA256 0b0d73fc... (the same full hash recorded above), and idle
 was confirmed before lease release. No long-term stability claim is made.
 
-The next private candidate selects the existing back-thread macro mode on PS5
-instead of front-thread macros, retaining queue ordering and the original
-8,192-spin policy. It passed full native checks/package and seven-patch / 133-file
-reproduction. Its eboot is
+Back-thread macro trial (not retained)
+-------------------------------------
+
+Run `1793702663932404655`, fresh PID 871, selected the existing back-thread
+macro mode on PS5 while retaining queue ordering and the original 8,192-spin
+policy. Fast GPU was on (Low accuracy), reactive flushing off, resolution 1x
+and frame generation off. The launch log confirmed engine methods on the
+second thread without the front-thread macro suffix. The candidate passed full
+native checks/package and seven-patch / 133-file reproduction. Its eboot was
 `021579402f888b0ac91fd8db76eb25f04033995651d31dfd6a09b3fc4371096a`,
 matched ELF
 `21314fae53744ac0203b154ce0ef1e4fcb3cc23979c7265625691630de8bcfb3`.
-Console measurement is queued with the same Low/reactive-off/1x/framegen-off
-settings and post-window on/off-CPU profiles. This remains an unretained
-experiment pending that result, not an established performance improvement.
+
+Ten full windows inside the measured interval total **641 frames / 50.442917 s
+= 12.707433 FPS**, worst 653.896 ms. Terra inspected start, end and post-profile
+captures: rendered farmland, dirt road, hay bales and windmill scenery, with
+no obvious major corruption. The views differ from the prior reactive-off
+run, so the results establish no controlled benefit from moving macros.
+The >40 FPS objective remains unmet.
+
+Subsequent profiles were excluded from the FPS interval. A 3.003 s stat sample
+measured front GPU 0.478 CPU / 111,208 context switches and GPUBack 0.675 CPU /
+22,816 context switches. In the on-CPU profile, front GPU samples were 69.57%
+Drain and 22.17% sched_yield; GPUBack samples were 24.84% BackLoop. A later
+99 Hz, 5 s off-CPU recording captured 32,604 samples, with target stops averaging
+1,012 microseconds and peaking at 3,698.8 microseconds. Its weights describe
+blocked wall time across threads, not CPU utilization. Front GPU off-CPU stacks
+were 54.86% HostCommandQueue::PopWait, 28.74% FlushGpuWrittenCommands through
+Drain and 9.11% through sched_yield. GPUBack was 31.38% atomic-wait kernel
+entry and 20.04% BackLoop; driver queue sequence sleeps accounted for 1.62%.
+These observations show substantial queue waiting and draining but do not
+justify bypassing GPU-written-list ordering.
+
+The original front-thread macro default was restored; the candidate patch and
+artifacts remain private experimental evidence. Maintained patches again
+reproduce six patches / 132 files. All three per-PID dump files were absent.
+Original package files, metadata, controls and exact preference bytes were
+restored and verified (settings SHA256 0b0d73fc..., full hash above); idle was
+confirmed before lease release. No long-term stability claim is made.
