@@ -489,3 +489,36 @@ result. No final pool snapshot, stat sample or completed dump-absence check is
 claimed. Original package files, metadata and controls were restored and hash
 verified, with idle confirmed before releasing the lease. Memory exhaustion
 remains unresolved; this patch does not establish sustained stability.
+
+
+Matched title profile after shader-cache change
+----------------------------------------------
+
+Run `1793676188518827211` completed as fresh PID 750 using the same 7050e969
+executable and 444549e7 matched ELF. Terra inspected both profile endpoints:
+rendered blue coastal-road title scenes, no launcher/error or obvious major
+corruption; several distant track-like segments in the first still appeared
+disconnected, with intended appearance uncertain. The three dump files were
+absent, and original console files/controls were restored and verified idle.
+
+A 3.005322 s stat interval measured 2.993 process CPUs and 94,976 context
+switches. GPU used 0.412 CPU / 24,889 switches; VulkanWorker 0.080 CPU / 5,187
+switches; GPUFencingThread 0.089 CPU / 5,484 switches. The subsequent 199 Hz,
+5 s cpu-clock recording completed with 3,005 samples. Target stops averaged
+117.5 microseconds and peaked at 2,627.3 microseconds; profiling is intrusive
+and its interval is not a production FPS result. Offline conversion used the
+exact archived ELF rather than the default stripped-symbol names.
+
+GPU stacks include command-queue waits, worker notification calls, fence waits,
+command processing and macro execution. Kernel leaf sub_380 covers both waits
+and notification syscalls; its aggregate must not be called entirely idle.
+The worker has many wait stacks, so these data do not establish driver shader
+compilation as the current limit. Frequent handoffs and guest CPU read ordering
+remain candidates to investigate without bypassing coherence.
+
+The prior exact crash report was collected before launch and symbolized with
+its matched ELF: termination occurred 221 s after app startup, GPU thread,
+VK_ERROR_OUT_OF_DEVICE_MEMORY, largest free direct block 1 MiB. The verified
+call sites include CreateBuffer and staging allocation/recovery while preparing
+sparse texture uploads. Stack scanning can retain older call return addresses,
+so the full scanned list is not treated as a continuous backtrace.
