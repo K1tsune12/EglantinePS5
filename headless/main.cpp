@@ -531,6 +531,15 @@ int main(int argc, char** argv) {
             Eden::BootTrace::Line("MKW pipeline preload mode=%u",
                                  Eden::DevVulkan::pipeline_preload_mode);
         }
+        // Owned boot selection for submission-completion texture retirement.
+        {
+            std::ifstream retirement(Eden::AppFile("mkw-texture-retirement-mode.txt"));
+            unsigned value{};
+            std::string trailing;
+            const bool enabled = (retirement >> value) && value == 1 && !(retirement >> trailing);
+            setenv("EDEN_PS5_COMPLETION_RETIREMENT", enabled ? "1" : "0", 1);
+            Eden::BootTrace::Line("MKW texture retirement mode=%u", unsigned(enabled));
+        }
         // Enable bounded readback probes for explicit diagnostic builds.
         setenv("EDEN_NX2_READBACK_DIAGNOSTICS", "1", 1);
         unsetenv("EDEN_NX2_PARTIAL_TEXTURE_READBACK");

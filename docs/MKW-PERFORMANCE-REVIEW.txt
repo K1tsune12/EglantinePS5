@@ -1540,3 +1540,30 @@ a payload before host GPU completion; the current fast path requires High
 accuracy. Satisfying the SDK target alone therefore cannot prove the host GPU
 producer finished. Retain that guard or require a real Vulkan completion
 certificate. Extracted game code and raw registers remain private.
+
+Retirement control validation correction
+Run 1793701562870756342 (PID 866, diagnostic e60341ad) stopped at its policy
+acknowledgement before any capture gate or Free Roam measurement. Runtime logs
+show completion=false: this MKW-only build does not parse dev-settings.txt env
+switches. The harness also expected numeric 1/0 while fmt prints true/false.
+The tested default-policy loading interval retained at most 1,966,080 measured
+image-allocation bytes; this is not a title/gameplay footprint or policy A/B.
+No application crash or performance conclusion is attributed to this harness
+failure. App/control/config restoration and cache-byte preservation verified.
+
+The corrected port reads mkw-texture-retirement-mode.txt once, under
+EDEN_MKW_DIAGNOSTICS, before renderer creation. Only exact value 1 enables the
+experiment; missing, malformed, out-of-range or trailing input forces zero,
+overriding an inherited environment value. The fixture compiles and runs the
+actual boot-selection block for these cases as well as both lifetime policies,
+under ASan/UBSan and TSan. The harness requires the boot acknowledgement and
+runtime policy log, with the correct boolean spelling, before measurement.
+Both corrected normal/diagnostic full native chains pass all required source
+checks/build/link/package and 179 core cases / 2,239,932 assertions each.
+  Diagnostic eboot: 42ae960f73310d336901872d5640a3aba25b623ade6e9c108621d697227d817d
+  Diagnostic ELF:   af5abb0af7091560e0b28d981f0263e8abf0cc9d08f4f85dffca621675043470
+  Normal eboot:     4f20e9fe50ecf9d0ebf3cc3705011e111b3d9d17d5028833116b4d2045e7139d
+  Normal ELF:       4cdd7a42b2e1a1c9345be3e029c76bf92b18541bb829996f753b3aa489740b02
+Core patches and the isolated driver archive are unchanged. The corrected
+on/off pair is queued as one lease; no duplicate old run or sampler reset is
+attempted. No completed retirement comparison or FPS/memory gain exists yet.

@@ -16,6 +16,12 @@ assert 'else if (!immediate_delete) {\n        RetireTextureObject(runtime, sent
 assert source.count('RetireTextureObject(')==4
 prefix=source[source.index('void TextureCache<P>::TickFrame() {'):]
 assert prefix.index('completed_framebuffers.Collect') < prefix.index('completed_image_views.Collect') < prefix.index('completed_images.Collect') < prefix.index('RunGarbageCollector();')
+main=(root/'headless/main.cpp').read_text()
+boot_start=main.index('        // Owned boot selection for submission-completion texture retirement.')
+boot_end=main.index('        // Enable bounded readback probes for explicit diagnostic builds.',boot_start)
+assert main.rfind('#ifdef EDEN_MKW_DIAGNOSTICS',0,boot_start) > main.rfind('#endif',0,boot_start)
+assert boot_end < main.index('Common::Log::Initialize();',boot_end)
+boot_selection=main[boot_start:boot_end]
 runtime_source=(core/'renderer_vulkan/vk_texture_cache.cpp').read_text()
 runtime_hooks=runtime_source[runtime_source.index('u64 TextureCacheRuntime::RetirementTick() const {'):runtime_source.index('void TextureCacheRuntime::TickFrame() {')]
 code=r'''
@@ -25,6 +31,9 @@ code=r'''
 #include <cassert>
 #include <cstdint>
 #include <iostream>
+#include <fstream>
+#include <string>
+#include <cstdio>
 #include <map>
 #include <random>
 #include <thread>
@@ -43,6 +52,14 @@ struct TextureCacheRuntime {
  bool IsRetirementComplete(u64) const;
 };
 '''+runtime_hooks+r'''
+namespace Eden {
+std::string boot_path;
+std::string AppFile(const char*) {return boot_path;}
+namespace BootTrace {void Line(const char*,unsigned) {}}
+}
+void ConfigureBoot() {
+'''+boot_selection+r'''
+}
 using namespace VideoCommon;
 struct Resource {
  unsigned id{};static inline std::array<unsigned,100000> deaths{};
@@ -53,8 +70,15 @@ struct Resource {
 };
 struct NoHooks {};
 int main(int argc,char**argv){
- assert(argc==2);bool enabled=std::atoi(argv[1]);
- if(enabled)setenv("EDEN_PS5_COMPLETION_RETIREMENT","1",1);
+ assert(argc==2||argc==4);bool enabled=std::atoi(argv[1]);
+ if(argc==4){
+  Eden::boot_path=argv[3];
+  if(std::string(argv[2])!="missing"){std::ofstream file(Eden::boot_path);file<<argv[2];}
+  // An inherited/stale environment value must not override a missing or invalid control.
+  setenv("EDEN_PS5_COMPLETION_RETIREMENT","1",1);ConfigureBoot();
+  assert(std::string(std::getenv("EDEN_PS5_COMPLETION_RETIREMENT"))==(enabled?"1":"0"));
+  std::remove(Eden::boot_path.c_str());
+ }else if(enabled)setenv("EDEN_PS5_COMPLETION_RETIREMENT","1",1);
  else unsetenv("EDEN_PS5_COMPLETION_RETIREMENT");
  Scheduler scheduler;TextureCacheRuntime runtime{scheduler};
  {
@@ -116,3 +140,6 @@ with tempfile.TemporaryDirectory(prefix='texture-retirement-')as temporary:
  folder=Path(temporary);(folder/'check.cpp').write_text(code)
  subprocess.run(['clang++-18','-std=c++20','-O1','-g','-pthread','-fsanitize=thread' if args.tsan else '-fsanitize=address,undefined','-fno-omit-frame-pointer','-I'+str(root/'Eglantine/src'),str(folder/'check.cpp'),'-o',str(folder/'check')],check=True)
  for mode in ['0','1']:subprocess.run([str(folder/'check'),mode],check=True,timeout=15)
+
+ for expected,content in [('1','1\n'),('0','missing'),('0','0'),('0','2'),('0','-1'),('0','bad'),('0','1 0'),('0','999999999999999999999999')]:
+  subprocess.run([str(folder/'check'),expected,content,str(folder/'mode.txt')],check=True,timeout=15)
