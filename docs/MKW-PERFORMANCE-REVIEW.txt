@@ -387,3 +387,62 @@ executable, package metadata, settings and owned input controls were restored
 and verified before its console lease ended. No source changes or performance
 claim derive from that incomplete run. The release hot-path check remains
 unresolved in this snapshot; separate worktrees' results are not included.
+
+Follow-up: completed-semaphore reads move the stall
+The ordered-read stream now includes the scalar load's semaphore eligibility
+stage, alias count and resolved device address. Registration, pointer identity,
+cache, mapping-generation and value checks remain in place. This fills a
+coverage gap: renderer counters cannot explain rejection before the renderer.
+Replaying an earlier complete stream preserved all wait/frame/copy aggregates.
+Patch reproduction, source whitespace checks and diagnostic native packaging
+passed; the full release instrumentation check remains unresolved.
+
+Run 1793666131839992176 (PID 676, firmware 12.20) deployed eboot SHA256
+e377a37159cf32e6e55cf34da7eccac2123d04222684f8c457f6139e8a00ecc6.
+Title, menu, Free Roam and all four phase images were viewed. The kart/camera
+stayed at the same city road position while NPC traffic changed. Direct mapped
+mode stayed 2; producer waits, copy batching and selective notifications were
+off. Completed-semaphore mode followed 0,1,0,1 in one process. Four ten-frame
+read/copy streams were complete. Twenty pooled frames per mode measured:
+  FPS:                         10.5981 / 10.4853
+  Ordered reads/frame:        337.8 / 394.0
+  Reads over 5 ms:             20 / 23
+  Read-call CPU ms/frame:      58.0727 / 66.7346
+  Frontend queue ms/frame:     51.6433 / 59.4790
+  Backend queue ms/frame:       0.60036 / 0.69985
+  GPU wait API ms/frame:        0.32608 / 0.31874
+  GPU staging B/frame:       625078.4 / 622347.2
+  CPU copy B/frame:          686262.4 / 683531.2
+  Direct mapped B/frame:     61184 / 61184
+Individual read median/p95/max were 0.025739/0.049073/63.344478 ms off and
+0.025338/0.046508/60.694671 ms on. CPU durations overlap across threads.
+
+The baseline had twenty long reads at the main semaphore site. With the path
+on, eleven remained there, two moved to another registered semaphore, nine
+were at unregistered words and one was an eight-byte read. At frame 2280 the
+main device word 0x36000 had 537 successful reads, 52 buffer-lock and 86
+texture-lock rejections, with no dirty/unpublished/value-change rejections.
+These counters cover longer intervals than the traces. Aliases/registration
+were not the main word's rejection cause. The path was actually exercised,
+but waits moved and their total grew; no meaningful FPS benefit is established.
+Completed-semaphore reads remain off by default.
+
+Matched three-second profiles outside each trace show 12.90%/13.53% of GPU
+thread sample weight in clock_gettime. The dominant captured chain reaches
+ReadbackDiagnostics::Scope from GuestMemory<CommandHeader>::Read, DmaPusher::Step
+and MemoryManager::FlushRegion. This is sampled thread attribution, not whole
+GPU utilization. Ten-second aggregate windows contained about 0.94 million
+texture/buffer/query readback checks apiece, mostly command-fetch cache work.
+The command-fetch path is the next optimization target; bypassing the remaining
+semaphore checks would not address the demonstrated moved waits.
+
+A newer Zortos change cce6d44af2 snapshots submitted command words; subsequent
+6612817cb4 and fae3bc64 protect GPU-written entries, first writes, resumed
+entries and continued-parameter flushes. Those source changes were inspected
+in another local upstream checkout, not applied or validated here. Any trial
+needs bounded snapshot memory and the complete producer/resume checks.
+
+This bounded run ended without a fresh crash, with a largest free physical
+block of 486 MiB near guest 230 s. It is not a sustained stability or movement
+test. Original executable, package metadata, settings and input controls were
+restored and verified before the lease ended. The 40 FPS goal remains open.

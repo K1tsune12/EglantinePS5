@@ -1941,7 +1941,7 @@ index b06b7b818d..af650f8d6c 100644
  
  } // namespace Service
 diff --git a/src/core/memory.cpp b/src/core/memory.cpp
-index 50cd0aea05..91c5bf87f8 100644
+index 50cd0aea05..74f2ea3afb 100644
 --- a/src/core/memory.cpp
 +++ b/src/core/memory.cpp
 @@ -1,3 +1,4 @@
@@ -1959,20 +1959,25 @@ index 50cd0aea05..91c5bf87f8 100644
  namespace Core::Memory {
  
  u32& UnmappedReadFlag() {
-@@ -735,6 +739,49 @@ struct Memory::Impl {
+@@ -735,6 +739,67 @@ struct Memory::Impl {
              GetInteger(vaddr), []() {}, []() {});
      }
  
-+    std::optional<u32> TryPublishedSemaphoreRead(u64 address) {
++    std::optional<u32> TryPublishedSemaphoreRead(
++        u64 address, VideoCommon::ReadbackDependencyDiagnostics::PublishedSemaphoreAttempt& attempt) {
++        using Attempt = VideoCommon::ReadbackDependencyDiagnostics::PublishedSemaphoreAttempt;
 +        static const bool enabled = [] {
 +            const char* value = std::getenv("EDEN_NX2_PUBLISHED_SEMAPHORE_READS");
 +            return value && std::strcmp(value, "1") == 0;
 +        }();
-+        if (!enabled || (address & 3) ||
++        if (!enabled ||
++            (eden_published_semaphore_reads_enabled && !eden_published_semaphore_reads_enabled()))
++            return {};
++        attempt.stage = Attempt::Ineligible;
++        if ((address & 3) ||
 +            !Tegra::g_nx2_ampere.load(std::memory_order_relaxed) ||
 +            !Settings::IsGPULevelHigh() ||
-+            system.GetCurrentHostThreadID() >= Core::Hardware::NUM_CPU_CORES ||
-+            (eden_published_semaphore_reads_enabled && !eden_published_semaphore_reads_enabled()))
++            system.GetCurrentHostThreadID() >= Core::Hardware::NUM_CPU_CORES)
 +            return {};
 +        const auto registered = [&] {
 +            for (const auto& entry : Tegra::g_nx2_semaphore_regions) {
@@ -1982,8 +1987,10 @@ index 50cd0aea05..91c5bf87f8 100644
 +            }
 +            return false;
 +        };
++        attempt.stage = Attempt::Unregistered;
 +        if (!registered()) return {};
 +        const auto* pointer = GetPointerImpl(address, [] {}, [] {});
++        attempt.stage = Attempt::NoPointer;
 +        if (!pointer) return {};
 +        auto& device = system.Host1x().MemoryManager();
 +        const auto mapping = device.MappingGeneration();
@@ -1995,37 +2002,51 @@ index 50cd0aea05..91c5bf87f8 100644
 +            if (candidate && (candidate & YUZU_PAGEMASK) == (address & YUZU_PAGEMASK) &&
 +                device.GetPointer<u8>(candidate) == pointer) resolved = candidate;
 +        });
++        attempt.aliases = aliases;
++        attempt.device_address = resolved;
++        attempt.stage = Attempt::AliasRejected;
 +        if (aliases != 1 || !resolved) return {};
 +        const auto value = system.GPU().ReadPublishedSemaphore(resolved, pointer);
-+        if (!value || device.MappingGeneration() != mapping || !registered() ||
-+            GetPointerImpl(address, [] {}, [] {}) != pointer ||
-+            device.GetPointer<u8>(resolved) != pointer) return {};
++        attempt.stage = Attempt::RendererRejected;
++        if (!value) return {};
++        attempt.stage = Attempt::MappingChanged;
++        if (device.MappingGeneration() != mapping) return {};
++        attempt.stage = Attempt::RegistrationChanged;
++        if (!registered()) return {};
++        attempt.stage = Attempt::CpuPointerChanged;
++        if (GetPointerImpl(address, [] {}, [] {}) != pointer) return {};
++        attempt.stage = Attempt::DevicePointerChanged;
++        if (device.GetPointer<u8>(resolved) != pointer) return {};
 +        // This value satisfies only this scalar load. Do not disarm the page's
 +        // read traps or create a whole-page readback certificate.
 +        if (eden_published_semaphore_read_hit) eden_published_semaphore_read_hit();
++        attempt.stage = Attempt::Hit;
 +        return value;
 +    }
 +
      /// @brief Reads a particular data type out of memory at the given virtual address.
      /// @param vaddr The virtual address to read the data type from.
      /// @tparam T The data type to read out of memory.
-@@ -742,6 +789,7 @@ struct Memory::Impl {
+@@ -742,6 +807,8 @@ struct Memory::Impl {
      template <typename T>
      inline T Read(Common::ProcessAddress vaddr) noexcept requires(std::is_trivially_copyable_v<T>) {
          const u64 addr = GetInteger(vaddr);
 +        std::optional<u32> published;
++        VideoCommon::ReadbackDependencyDiagnostics::PublishedSemaphoreAttempt semaphore_attempt{};
          if (auto const ptr = GetPointerImpl(addr, [addr]() {
              // A guest spinning on a bad pointer reads unmapped memory tens of thousands of times
              // a second: keep the first ones and then a sample.
-@@ -751,8 +799,19 @@ struct Memory::Impl {
+@@ -751,8 +818,20 @@ struct Memory::Impl {
              }
              ++UnmappedReadFlag();
          }, [&]() {
+-            HandleRasterizerDownload(addr, sizeof(T), ReadbackDiagnostics::Caller::ScalarRead);
 +            if constexpr (sizeof(T) == sizeof(u32)) {
-+                published = TryPublishedSemaphoreRead(addr);
++                published = TryPublishedSemaphoreRead(addr, semaphore_attempt);
 +                if (published) return;
 +            }
-             HandleRasterizerDownload(addr, sizeof(T), ReadbackDiagnostics::Caller::ScalarRead);
++            HandleRasterizerDownload(addr, sizeof(T), ReadbackDiagnostics::Caller::ScalarRead,
++                                     &semaphore_attempt);
          }); ptr) [[likely]] {
 +            if constexpr (sizeof(T) == sizeof(u32)) {
 +                if (published) {
@@ -2037,23 +2058,28 @@ index 50cd0aea05..91c5bf87f8 100644
              // It may be tempting to rewrite this particular section to use "reinterpret_cast";
              // afterall, it's trivially copyable so surely it can be copied ov- Alignment.
              // Remember, alignment. memcpy() will deal with all the alignment extremely fast.
-@@ -806,9 +865,14 @@ struct Memory::Impl {
+@@ -804,11 +883,18 @@ struct Memory::Impl {
+         return true;
+     }
  
-     void HandleRasterizerDownload(VAddr v_address, size_t size, ReadbackDiagnostics::Caller caller) {
+-    void HandleRasterizerDownload(VAddr v_address, size_t size, ReadbackDiagnostics::Caller caller) {
++    void HandleRasterizerDownload(
++        VAddr v_address, size_t size, ReadbackDiagnostics::Caller caller,
++        const VideoCommon::ReadbackDependencyDiagnostics::PublishedSemaphoreAttempt* semaphore = nullptr) {
          ReadbackDiagnostics::Scope diagnostics{caller, size};
 -        using ReadbackDiagnostics::Event;
          const auto* p = GetPointerImpl(
              v_address, []() {}, []() {});
 +        const auto ordered_read = [&](DAddr address, u64 bytes) {
 +            VideoCommon::ReadbackDependencyDiagnostics::CallerScope trace{
-+                static_cast<u64>(caller) + 1, static_cast<u64>(v_address), size, p};
++                static_cast<u64>(caller) + 1, static_cast<u64>(v_address), size, p, semaphore};
 +            return system.GPU().OnCPURead(address, bytes);
 +        };
 +        using ReadbackDiagnostics::Event;
          auto& gpu_device_memory = system.Host1x().MemoryManager();
          const size_t core = system.GetCurrentHostThreadID();
          diagnostics.BindCore(core);
-@@ -857,7 +921,7 @@ struct Memory::Impl {
+@@ -857,7 +943,7 @@ struct Memory::Impl {
                      host_read_cache.Invalidate();
                      diagnostics.Add(Event::HostMiss);
                      diagnostics.Add(Event::GpuPage);
@@ -2062,7 +2088,7 @@ index 50cd0aea05..91c5bf87f8 100644
                      const auto [current_page, current_aliases] = resolve_page(
                          GetPointerImpl(v_address, []() {}, []() {}), read_traps.Generation());
                      const u64 completed_generation = gpu.ReadbackGeneration();
-@@ -886,7 +950,7 @@ struct Memory::Impl {
+@@ -886,7 +972,7 @@ struct Memory::Impl {
              gpu_device_memory.ApplyOpOnPointer(p, host_thread_scratch, [&](DAddr address) {
                  diagnostics.AddAlias();
                  diagnostics.Add(Event::GpuFallback);
@@ -2071,7 +2097,7 @@ index 50cd0aea05..91c5bf87f8 100644
              });
              DisarmReadTraps(v_address, size, generation);
              return;
-@@ -909,8 +973,7 @@ struct Memory::Impl {
+@@ -909,8 +995,7 @@ struct Memory::Impl {
              const auto capture_shadow = [&] {
                  CoreReadbackShadow::Snapshot snapshot;
                  const u64 offset = v_address & YUZU_PAGEMASK;
@@ -2081,7 +2107,7 @@ index 50cd0aea05..91c5bf87f8 100644
                      !HostReadbackCache::FitsInPage(offset, size)) {
                      return snapshot;
                  }
-@@ -973,7 +1036,11 @@ struct Memory::Impl {
+@@ -973,7 +1058,11 @@ struct Memory::Impl {
                  }
              }
              diagnostics.Add(Event::GpuCore);
@@ -6841,10 +6867,10 @@ index 762036fd00..42a90d738b 100644
          return std::nullopt;
      }
 diff --git a/src/video_core/readback_dependency_diagnostics.h b/src/video_core/readback_dependency_diagnostics.h
-index 58a41e4403..5e2114e041 100644
+index 58a41e4403..2010c067f8 100644
 --- a/src/video_core/readback_dependency_diagnostics.h
 +++ b/src/video_core/readback_dependency_diagnostics.h
-@@ -52,9 +52,125 @@ struct Record {
+@@ -52,9 +52,142 @@ struct Record {
      u64 area_end{}, flush_end{}, cpu_return{};
      u32 docked_mode{}, gpu_accuracy{}, runtime_gpu_accuracy{}, dma_accuracy{}, cpu_accuracy{};
      bool preemptive_flag{}, split{};
@@ -6858,6 +6884,7 @@ index 58a41e4403..5e2114e041 100644
 +    u64 guest_x19{}, guest_x20{}, guest_x21{}, guest_x22{}, guest_x23{}, guest_x24{};
 +    u64 buffer_gpu_copy_bytes{}, buffer_cpu_copy_bytes{};
 +    u64 gpu_wait_ns{}, gpu_wait_count{}, gpu_wait_tick_max{};
++    u64 semaphore_stage{}, semaphore_aliases{}, semaphore_device_address{};
  };
  
 +// GPU-owner context: scopes nested backend work to this ordered read only.
@@ -6927,12 +6954,25 @@ index 58a41e4403..5e2114e041 100644
 +    GuestContextProvider previous;
 +};
 +
-+struct CallerContext { u64 kind{}, address{}, size{}; const void* pointer{}; };
++// Attribution only: stages never authorize a load or alter its ordering.
++struct PublishedSemaphoreAttempt {
++    enum Stage : u64 { Disabled, Ineligible, Unregistered, NoPointer, AliasRejected,
++                      RendererRejected, MappingChanged, RegistrationChanged,
++                      CpuPointerChanged, DevicePointerChanged, Hit };
++    u64 stage{}, aliases{}, device_address{};
++};
++struct CallerContext {
++    u64 kind{}, address{}, size{};
++    const void* pointer{};
++    PublishedSemaphoreAttempt semaphore{};
++};
 +inline thread_local CallerContext caller_context;
 +class CallerScope {
 +public:
-+    CallerScope(u64 kind, u64 address, u64 size, const void* pointer = nullptr) : previous{caller_context} {
-+        caller_context = {kind, address, size, pointer};
++    CallerScope(u64 kind, u64 address, u64 size, const void* pointer = nullptr,
++                const PublishedSemaphoreAttempt* semaphore = nullptr) : previous{caller_context} {
++        caller_context = {kind, address, size, pointer,
++                          semaphore ? *semaphore : PublishedSemaphoreAttempt{}};
 +    }
 +    ~CallerScope() { caller_context = previous; }
 +private:
@@ -6958,6 +6998,9 @@ index 58a41e4403..5e2114e041 100644
 +        trace.caller = caller_context.kind;
 +        trace.original_address = caller_context.address;
 +        trace.original_size = caller_context.size;
++        trace.semaphore_stage = caller_context.semaphore.stage;
++        trace.semaphore_aliases = caller_context.semaphore.aliases;
++        trace.semaphore_device_address = caller_context.semaphore.device_address;
 +        trace.scalar_valid = caller_context.kind == 4 && caller_context.pointer &&
 +            (caller_context.size == 1 || caller_context.size == 2 ||
 +             caller_context.size == 4 || caller_context.size == 8) &&
@@ -6970,7 +7013,7 @@ index 58a41e4403..5e2114e041 100644
      static const bool enabled = [] {
          const char* value = std::getenv("EDEN_NX2_READBACK_DEPENDENCY_DIAGNOSTICS");
          return value != nullptr && std::strcmp(value, "1") == 0;
-@@ -76,6 +192,10 @@ inline std::optional<Record> Begin() {
+@@ -76,6 +209,10 @@ inline std::optional<Record> Begin() {
  }
  
  inline void Report(const Record& record, const VideoCore::RasterizerDownloadArea& result) {

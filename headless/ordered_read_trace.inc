@@ -46,7 +46,7 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
     bool ok = reads && frames;
     if (reads) {
         std::setvbuf(reads, nullptr, _IOFBF, 128 * 1024);
-        std::fputs("id,start_frame,end_frame,request_ns,cpu_return_ns,core,caller,original_address,original_size,address,size,fence,completed_fence_at_request,sequence,requested_generation,backend_generation,checked_generation,checked_sequence,completed_generation,return_generation,before_lock_ns,enqueued_ns,front_popped_ns,backend_start_ns,area_end_ns,flush_end_ns,wait_begin_ns,wait_end_ns,dirty_mask,pending_channels,split,result_begin,result_end,scalar_valid,value_before,value_after,pending_before_valid,pending_before,pending_backend_valid,pending_backend,guest_pc,guest_lr,guest_sp,guest_x0,guest_x1,guest_x2,guest_x3,guest_x19,guest_x20,guest_x21,guest_x22,guest_x23,guest_x24,buffer_gpu_copy_bytes,buffer_cpu_copy_bytes,gpu_wait_ns,gpu_wait_count,gpu_wait_tick_max\n", reads);
+        std::fputs("id,start_frame,end_frame,request_ns,cpu_return_ns,core,caller,original_address,original_size,address,size,fence,completed_fence_at_request,sequence,requested_generation,backend_generation,checked_generation,checked_sequence,completed_generation,return_generation,before_lock_ns,enqueued_ns,front_popped_ns,backend_start_ns,area_end_ns,flush_end_ns,wait_begin_ns,wait_end_ns,dirty_mask,pending_channels,split,result_begin,result_end,scalar_valid,value_before,value_after,pending_before_valid,pending_before,pending_backend_valid,pending_backend,guest_pc,guest_lr,guest_sp,guest_x0,guest_x1,guest_x2,guest_x3,guest_x19,guest_x20,guest_x21,guest_x22,guest_x23,guest_x24,buffer_gpu_copy_bytes,buffer_cpu_copy_bytes,gpu_wait_ns,gpu_wait_count,gpu_wait_tick_max,semaphore_stage,semaphore_aliases,semaphore_device_address\n", reads);
         for (std::size_t i = 0; i < c.Count(); ++i) {
             const auto& e = c.entries[i];
             const auto& r = e.read;
@@ -61,7 +61,8 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
                 r.guest_pc,r.guest_lr,r.guest_sp,r.guest_x0,r.guest_x1,r.guest_x2,r.guest_x3,
                 r.guest_x19,r.guest_x20,r.guest_x21,r.guest_x22,r.guest_x23,r.guest_x24,
                 r.buffer_gpu_copy_bytes,r.buffer_cpu_copy_bytes,r.gpu_wait_ns,
-                r.gpu_wait_count,r.gpu_wait_tick_max};
+                r.gpu_wait_count,r.gpu_wait_tick_max,r.semaphore_stage,r.semaphore_aliases,
+                r.semaphore_device_address};
             for (unsigned k = 0; k < std::size(values); ++k)
                 std::fprintf(reads, k ? ",%" PRIu64 : "%" PRIu64, values[k]);
             std::fputc('\n', reads);

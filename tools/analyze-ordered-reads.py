@@ -12,6 +12,10 @@ import json
 from pathlib import Path
 
 CALLERS = {0: 'unclassified', 1: 'ReadBlock', 2: 'CopyBlock', 3: 'InvalidateDataCache', 4: 'ScalarRead'}
+SEMAPHORE_STAGES = {0: 'disabled_or_not_u32', 1: 'ineligible', 2: 'unregistered',
+                    3: 'no_pointer', 4: 'alias_rejected', 5: 'renderer_rejected',
+                    6: 'mapping_changed', 7: 'registration_changed',
+                    8: 'cpu_pointer_changed', 9: 'device_pointer_changed', 10: 'hit'}
 
 
 def percentile(values, fraction):
@@ -167,6 +171,17 @@ def analyze(prefix, allow_incomplete_copy_sources=False):
                            'Timing includes the bounded trace overhead; compare the same scene with the same instrumentation.',
                            'Only reads starting inside the armed window are recorded; an earlier in-flight read can overlap its first frame.',
                            'Completion-wait time measures the Wait call, including its synchronization overhead, not exclusively time asleep.'])
+    if reads and all('semaphore_stage' in r for r in reads):
+        semaphore_groups = collections.defaultdict(list)
+        for r in reads:
+            stage = r['semaphore_stage']
+            if stage not in SEMAPHORE_STAGES:
+                raise ValueError(f'Unknown semaphore stage {stage}')
+            semaphore_groups[SEMAPHORE_STAGES[stage]].append(r)
+        result['semaphore_attempts'] = {
+            stage: dict(reads=len(rows), call_cpu_ms=sum(r['duration_ns'] for r in rows)/1e6,
+                        long_reads=sum(r['duration_ns'] > 5_000_000 for r in rows))
+            for stage, rows in semaphore_groups.items()}
     result['mapped_metrics_available'] = 'mapped_direct_bytes' in bounds[0]
     for field in ('mapped_direct_bytes','mapped_checked_bytes','mapped_failures'):
         result[field] = sum(frame[field] for frame in frames)
@@ -241,6 +256,10 @@ def analyze(prefix, allow_incomplete_copy_sources=False):
              duration_us=r['duration_ns']/1e3, completion_wait_us=r['park_ns']/1e3,
              queue_us=r['queue_ns']/1e3,
              front_queue_us=r['front_queue_ns']/1e3, backend_queue_us=r['backend_queue_ns']/1e3,
+             semaphore_stage=SEMAPHORE_STAGES.get(r.get('semaphore_stage'), 'unavailable'),
+             semaphore_aliases=r.get('semaphore_aliases'),
+             semaphore_device_address=(hex(r['semaphore_device_address'])
+                 if 'semaphore_device_address' in r else None),
              service_us=r['service_ns']/1e3,
              resume_us=r['resume_ns']/1e3, dirty_mask=r['dirty_mask'],
              buffer_gpu_copy_bytes=r.get('buffer_gpu_copy_bytes',0),
