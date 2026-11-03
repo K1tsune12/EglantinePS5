@@ -1030,3 +1030,66 @@ with verification; pipeline cache bytes were unchanged. The retained source
 again reproduces five patches / 137 core files and matches the earlier cb73b7bf
 diagnostic / 8386366d normal implementation. The above-40-FPS objective remains
 unachieved; command processing/read ordering is the next measured bottleneck.
+
+Follow-up: split execution still stalls at command fetch
+The retained cb73b7bf diagnostic artifact was run with only the existing MKW
+performance.fast_gpu preference forced true. The first attempt used a lowercase
+JSON title key; Settings::TitleKey uses uppercase, so that attempt did not apply
+the preference and produced no comparison. Its exact configuration was restored.
+The corrected run (PID 797, local evidence 1793687343850844795) confirms "fast GPU
+on" and split=1 in all 3,856 captured reads. Reactive flushing remained on; early
+command snapshots remained 1 and read-only pipeline prewarming remained 1.
+This is lower GPU accuracy, not a console clock change.
+
+Terra reviewed title/menu/Free Roam captures and a short throttle/brake sequence.
+Road markings, lamps and the minimap show forward displacement. Brake/neutral
+and the two measurement captures retain the same intersection, kart/camera and
+static landmarks. Road, grass, trees, lighting, occlusion and HUD are plausible
+in these images. Moving distant traffic/effects differ. This does not establish
+complete rendering correctness or sustained movement/stability.
+
+Both ten-frame windows use identical settings (not OFF/ON):
+  FPS                         13.9903 / 14.0046 (pooled 13.9974)
+  Ordered reads/frame         192.6 / 193.0 (pooled 192.8)
+  Reads over 5 ms              21 across 20 frames / 3,856 reads
+  Read median/p95/max          0.025899 / 0.052682 / 40.031609 ms
+  Front queue CPU ms/frame     38.5441
+  Back queue CPU ms/frame      1.9652
+  GPU wait API CPU ms/frame    0.3323
+  Buffer GPU-copy B/frame      686,616
+  Buffer CPU-copy B/frame      738,008
+  Direct mapped bytes/frame    51,392
+  Command snapshot B/frame     1,283,671.8
+All read/copy captures completed without dropped/in-flight records. Queue CPU
+totals overlap across threads; they are not a wall-frame partition. Scenes
+differ from the earlier high-accuracy runs, so neither the lower read count nor
+the roughly unchanged FPS is a controlled accuracy-setting A/B result.
+
+After the measurement windows, ps5-perf recorded a separate three-second precise
+profile (1,056 samples, matched cb73 ELF). GPU and GPUBack are both present.
+83.3% of sampled frontend CPU weight is in GpuSplit::Drain; 80.7% of frontend
+weight is specifically Drain under DmaPusher::FlushGpuWrittenCommands. The
+backend's largest self entry is BackLoop (31.4% of its own sampled CPU weight).
+The counts describe this short sample, not universal function costs. This
+changes the next optimization target: command-fetch synchronization repeatedly
+drains backend work; removing a staging copy does not remove that ordering.
+Any narrower drain must still cover the first queued writer before consulting
+historical written pages, plus deferred draws, unknown methods and callbacks.
+
+The known unimplemented GPU-modified overlapping-image log at texture-cache
+line 3032 also occurs in the earlier high-accuracy PID 780 log. It remains an
+unresolved correctness limitation, not a new split-only failure claim.
+The final pool snapshot verifies 598,540,288 free bytes and a 450,887,680-byte
+largest block, with the separate 512 MiB reserve held. Application, settings,
+metadata and owned input/controls were restored; pipeline cache bytes match.
+No new runtime patch or driver change was promoted from this observation.
+
+A separate current-source normal build with development input controls
+(EDEN_DEV_ROM_ID=0400C3F00006E000, MKW_DIAGNOSTICS/DEV_VULKAN/DEV_PROFILE=OFF)
+completed the full sync/check/build/link/package chain, including 179 core
+cases / 2,239,932 assertions. This is a development-input variant, not a release
+binary, and is not yet console-tested. It will measure gameplay without the
+heavy diagnostics; its memory/cache policies also differ from the diagnostic
+variant, so differences cannot be assigned solely to instrumentation overhead.
+  Eboot: b8ccef29dd39244854c4aeb28c29d8e62cf4fd30e40e599407017d299764b56d
+  ELF:   24db2ea72b14e461e7a95a64f92d408ee5df43a062c0e3a8d6f62d26c3c1d211
