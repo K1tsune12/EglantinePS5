@@ -621,11 +621,49 @@ Matched ELF:
 `e80e9ae4cb89b228cf43d412b461db83f08894352927875ac9a5df078054d8af`.
 The driver archive and six maintained core patches remain unchanged.
 
-A two-boot console comparison is queued under the shared lease. It changes only
-the existing per-game Fast GPU preference, off then on, with 1x resolution and
+The two-boot comparison completed under one shared lease. It changed only the
+existing per-game Fast GPU preference, off then on, with 1x resolution and
 frame generation off. Fast GPU explicitly selects Low GPU accuracy, which
-allows the existing split engine path; the normal High path remains the
-control. This is an accuracy-setting comparison, not evidence of a driver-only
-speedup. The runner records exact settings, bounded title intervals and images,
-and restores original preference bytes as well as package files. Console
-rendering, timing and preference restoration remain pending.
+allows the existing split engine path; the normal High path was the control.
+Unsafe CPU/DMA, async shaders, skip invalidation and the block list stayed off;
+reactive flushing stayed on, as verified by launch logs.
+
+| Run / PID | Setting | Valid frames / seconds | FPS | Worst frame |
+| --- | --- | --- | --- | --- |
+| 1793698544790593741 / 827 | Fast GPU off, High | 388 / 30.218228 | 12.839932 | 669.777 ms |
+| 1793698719421781801 / 829 | Fast GPU on, Low | 550 / 35.231547 | 15.611009 | 420.317 ms |
+
+Only full first-observed windows inside the measured interval with two-second
+margins are included. Terra inspected both control captures and all three Low
+captures. The control showed rendered autumn-garden title scenes; Low showed
+castle and Peach Resort scenes. No obvious major corruption or missing geometry
+was visible. Their different scenes prevent a controlled speed or quality
+comparison. Small dark marks in the Low end capture could not be classified
+from the still. The >40 FPS target remains unmet. This is an accuracy-setting
+comparison, not evidence of a driver-only speedup or general Low-accuracy
+correctness. Default accuracy is unchanged.
+
+The Low launch log confirmed split execution: engine methods on the second
+thread and macros on the first. A subsequent 3.004985 s stat sample measured
+3.846 process CPUs / 136,795 context switches, including front GPU 0.354 CPU /
+41,190 switches and GPUBack 0.639 CPU / 32,023 switches. After the FPS interval,
+a 5 s, 99 Hz cpu-clock profile captured 1,742 samples; target stops averaged
+119.2 microseconds and peaked at 676.9 microseconds. Its overhead is excluded
+from the FPS windows. Symbols came from the frozen matched ELF.
+
+In that recording, 77.25% of the front GPU thread's sample weight was exclusive
+to GpuSplit::Drain. Of GPUBack's 310 samples, 132 were exclusive to BackLoop:
+113 at ELF 0x1490872 and 11 at 0x1490879. Matched disassembly places these just
+after PAUSE in the 8,192-iteration idle poll, loading the published position and
+checking the loop bound. Thus the BackLoop symbol alone must not be treated as
+command execution cost. The idle loop and front drain are evidence-backed
+candidates for a bounded timing experiment; reducing spins is not assumed to
+improve FPS, because parking can add latency. No ordering bypass is authorized
+by these samples.
+
+Both runs completed without a detected core failure. All three per-PID dump
+files were absent. Package files, metadata and controls were restored and hash
+verified after each run, with idle confirmed. The settings file was restored
+byte-for-byte after each run, SHA256
+`0b0d73fce94f57e88b85cf48a3540ff3513e90500d793aa3f6eca093fa043d05`.
+This bounded observation does not establish long-term memory stability.
