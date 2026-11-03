@@ -667,3 +667,53 @@ verified after each run, with idle confirmed. The settings file was restored
 byte-for-byte after each run, SHA256
 `0b0d73fce94f57e88b85cf48a3540ff3513e90500d793aa3f6eca093fa043d05`.
 This bounded observation does not establish long-term memory stability.
+
+
+Explicit GPU-back idle spin experiment
+-------------------------------------
+
+A private PS5-only diagnostic added a volatile four-byte atomic, default 8,192
+and clamped to 65,536 iterations, to the existing idle PAUSE loop. All queue
+publication, consumption, waits and stop ordering stayed unchanged. Seven
+patches reproduced 133 core files for that probe; full native build/checks and
+packaging passed, including 179 cases / 2,239,932 assertions. Executable:
+`4981b7a19aa9a780a856209765eee1e401795454b50394a7d11ac31f66ee39bc`;
+matched ELF:
+`593209ab8e306dee6838614467e373af5e23b05079433a26fa9a552ba7263136`.
+Disassembly verified the runtime load and clamp, including the zero branch.
+
+The first attempt, `1793699595097613168`, stopped before identity or FPS
+measurement: startup briefly removed the boot log and FTP returned 550. The
+app did reach its native boot trace; this is not a demonstrated driver failure.
+Package/settings restoration and idle were verified. The startup-only guard
+now tolerates missing/empty boot logs within 60 s, while experiment guards
+continue to reject identity changes. A retry used the same frozen artifact.
+
+Run `1793700134950415899`, fresh PID 847, completed an 8,192 / 0 / 8,192 trial
+at Low accuracy, Fast GPU on, reactive flushing on, 1x and frame generation off.
+Live main bytes matched the ELF; the four-byte atomic at runtime 0x4d81680
+started at 8,192, each write was read-back verified, and the original value was
+restored before shutdown. Conservative full windows with two-second margins:
+
+| Explicit spins | Frames / seconds | FPS | Worst frame | GPUBack CPU / context switches in subsequent 3 s stat |
+| --- | --- | --- | --- | --- |
+| 8,192, first | 228 / 15.050065 | 15.149436 | 372.857 ms | 0.540 / 23,051 |
+| 0 | 123 / 10.083597 | 12.198028 | 687.214 ms | 0.562 / 96,681 |
+| 8,192, restored | 233 / 15.141946 | 15.387718 | 1,040.297 ms | 0.655 / 31,701 |
+
+Terra inspected all seven captures: rendered icy/snowy title scenes and a late
+foggy bridge scene, without obvious major corruption or missing geometry.
+Camera/scenery and memory pressure changed; this does not establish a
+controlled regression. It establishes no benefit from removing the explicit
+spin loop, and CPU utilization did not show a consistent reduction. Zero here
+removes the explicit loop; the C++ atomic-wait implementation has its own
+backoff. The original policy is retained. The diagnostic atomic and seventh
+patch were removed from retained source; six patches again reproduce 132
+files. The tested probe remains private with its matched source/ELF receipt.
+No rebuild is claimed for that restoration; the qualified 9c17df74 loading-fix
+artifact remains available and future packaging must rebuild restored source.
+
+All phases completed without a detected core failure. All three per-PID dump
+files were absent. Package/metadata/controls and the exact original settings
+bytes were restored and verified, idle confirmed, before releasing the lease.
+The >40 FPS objective remains unmet.
