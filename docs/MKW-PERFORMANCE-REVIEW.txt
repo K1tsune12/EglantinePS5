@@ -1177,3 +1177,70 @@ index request is not treated as legitimate game loading or suppressed by
 clamping/skipping a draw. Exact package/control restoration and pipeline-cache
 byte preservation verified. The new six-patch frontier candidate is a separate
 queued experiment; it is not claimed to fix this failure.
+
+Producer-frontier console comparison: no demonstrated performance gain
+The six-patch f68f0596 diagnostic artifact completed one OFF/ON/OFF/ON run,
+PID 811 (local evidence 1793691106480785666). Fast GPU stayed on, early command
+snapshots 1, read-only prewarming 1, other experimental modes off. Terra reviewed
+title/menu/Free Roam, short throttle/reverse displacement and all four matching
+stationary town/street captures. Static landmarks, camera and minimap align;
+no obvious rendering/HUD error is visible in these samples. A wall-facing pose
+was repositioned before measurement. This is not sustained movement validation.
+
+Four five-frame windows completed with no read/copy/fetch drops or in-flight
+records. Pooled OFF / ON (ten frames each):
+  FPS                           14.2902 / 13.9989
+  Ordered CPU reads/frame        268.1 / 271.8
+  Reads over 5 ms                10 / 10
+  Read median/p95/max (ms)        .026702/.059257/33.500025 | .027103/.068478/34.093798
+  Front queue CPU ms/frame       34.2682 / 34.4554
+  Back queue CPU ms/frame        2.0530 / 2.2445
+  GPU wait API CPU ms/frame      .3180 / .3116
+  Buffer GPU-copy B/frame        971,558.4 / 968,294.4
+  Buffer CPU-copy B/frame        1,011,072 / 1,009,036.8
+  Direct mapped B/frame          39,513.6 / 40,742.4
+  Command-fetch calls/frame      4,443.7 / 4,466.7
+  Producer pending at entry/f    4,123.6 / 2,882.2
+  Queued state-tail requests/f   0 / 1,363.6
+  Fetch duration CPU ms/frame    17.8002 / 17.6365
+  Fetch median/p95/max (ms)       .001363/.012669/2.992921 | .001443/.012429/3.093313
+The producer observation falls about 30%, but it is not a count of actual parks:
+the backend can finish between the observation and the wait. Timed fetch cost,
+ordered-read count/duration and FPS show no useful improvement. Waiting for
+fewer observed pending entries alone is not a performance success.
+
+Five-second guest-frame batches wholly inside fixed-mode intervals (at least
+two frames after acknowledgement) and outside the armed trace ranges average
+16.0019 FPS OFF / 15.9203 ON over 20.12 / 20.23 seconds. Other diagnostics remain
+enabled. These are not a release-build comparison; their difference from the
+trace windows also shows why trace overhead must not be ignored.
+
+The attempted post-window ps5-perf profile was refused because another sampling
+session was active. Its target and overlap with these windows are unknown.
+Thus no new CPU profile or profiling-free timing claim is made. The existing
+profile remains the motivation for investigating fetch drains. This limited
+classifier leaves compute and unknown operations conservative; it stays opt-in.
+The experiment restored executable, metadata, settings, owned controls/input;
+pipeline cache bytes match. Final verified direct-pool free/largest were
+431,652,864 / 228,589,568 bytes, with the separate 512 MiB reserve held.
+
+Oversized-index provenance candidate (not yet console-tested)
+Patch 0007 adds a failure-only dump for a selected index span of at least
+256 MiB, at most once per process. It prints live index registers, copied draw
+state, shadow RAM/control and the last 48 already-recorded method writes.
+It adds no per-write recording, guest-memory reads, clamps or draw suppression.
+It should distinguish bad method/register state from a bad draw-state copy.
+
+As an ABI sanity check, NVIDIA's public Ampere B class header lists FIRST at
+0x17dc and COUNT at 0x17e0, matching the corresponding Eden register offsets:
+https://github.com/NVIDIA/open-gpu-doc/blob/master/classes/3d/clc797.h
+This family-level reference does not establish the exact Switch 2 class or the
+failure's producer. No register-translation change follows from it.
+
+The current normal-input candidate (DEV_ROM_ID set; MKW_DIAGNOSTICS, DEV_VULKAN
+and DEV_PROFILE off) passed full native checks/build/link/package, including
+179 core cases / 2,239,932 assertions. Seven patches reproduce 142 files.
+It is queued for a normal-mode failure investigation with private crash-archive
+collection. The earlier a004c699 pre-shadow variant was never deployed.
+  Eboot: d901552711f458233165e49b71d9a4ee219b8240d378d881267deb3c7520ad0f
+  ELF:   9b55adf44a82432d9c3e62d86788a0523716b2fa66e1027ba401d5a6ced9452c
