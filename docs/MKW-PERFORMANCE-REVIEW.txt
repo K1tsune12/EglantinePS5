@@ -1535,4 +1535,8 @@ Pre-queue values are unsynchronized observations, not validated producer/range
 certificates. This supports auditing completed-range service and cache-lock
 rejections; it does not justify returning arbitrary stale data, removing waits
 or relaxing alias/remapping protection. No guest-code patch or CPU-read bypass
-was implemented. Extracted game code and raw registers remain private.
+was implemented. This run used lower GPU accuracy, where SignalFence can publish
+a payload before host GPU completion; the current fast path requires High
+accuracy. Satisfying the SDK target alone therefore cannot prove the host GPU
+producer finished. Retain that guard or require a real Vulkan completion
+certificate. Extracted game code and raw registers remain private.
