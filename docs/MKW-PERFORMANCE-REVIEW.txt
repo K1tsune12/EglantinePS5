@@ -4,18 +4,24 @@ Scope
 This draft preserves the accumulated investigation, including experimental
 instrumentation, as requested. The core remains Zortos 3140648a668aaebf87bae2dea17512fdca125ba0.
 Maintained patch 0004 is incremental over the existing three patches; patch
-0005 bounds shader-module retention after pipeline compilation. The
+0005 bounds shader-module retention after pipeline compilation, 0006 adds the
+opt-in command-fetch frontier experiment, and 0007 records oversized-index
+provenance on failure. All seven maintained patches reproduce 142 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
-Current build status: normal and MKW diagnostic configurations pass all required
-native build checks without EDEN_SKIP_SOURCE_CHECKS. The earlier release CPU
-instrumentation failure recorded below is resolved. Recent diagnostic attempts
-found staging failures both during Crown City travel and before opening the
+Current build status: the six-patch normal and MKW diagnostic configurations
+passed all required native checks/build/link/package without
+EDEN_SKIP_SOURCE_CHECKS; the seven-patch normal-input provenance configuration
+also passed that full chain. Each passed 179 core cases / 2,239,932 assertions.
+The seven-patch diagnostic configuration has not been rebuilt. The earlier
+release CPU instrumentation failure recorded below is resolved. Recent
+diagnostic attempts found staging failures both during Crown City travel and before opening the
 world map. A module-budget test reached the map but hit a private navigation
 runner bug; its corrected retry failed on a malformed index-buffer request.
-The final normal artifact has not been console-tested. An early-command-snapshot
-diagnostic reached Free Roam with short movement verified, at about 14.6 FPS.
+A seven-patch normal-input candidate reached reviewed Free Roam and completed
+a short 13.22 FPS stationary run; the release configuration without development
+input controls remains untested. An early-command-snapshot diagnostic reached Free Roam with short movement verified, at about 14.6 FPS.
 Sustained Free Roam memory stability and the 40 FPS goal remain unproven. The
 final follow-up below records these failures, scope and exact artifacts.
 
@@ -103,17 +109,20 @@ this is a broad research draft, not a claim of zero production overhead.
 Published-semaphore and partial-readback experiments need further review.
 Later diagnostic builds on the current-main base were exercised on console;
 the latest timestamp build reached the title/menu, then exhausted memory
-before Free Roam. The complete accumulated normal configuration has not been
-console-tested. Earlier experiment binaries remain the readback evidence.
+before Free Roam. The seven-patch normal-input configuration was subsequently console-tested
+as recorded at the end of this report. The release configuration without
+development controls remains untested. Earlier experiment binaries remain
+the readback evidence.
 
-Host validation
-Patch reproduction: four patches, 128 touched files, matching the working
-core. ASan/UBSan checks passed for mapped allocation policy, range tracker
-(240,000 oracle queries), writer tracker (10,000 allocation lifetimes), and
+Initial host validation (historical; later results supersede this section)
+Patch reproduction at that point: four patches, 128 touched files, matching
+the working core. ASan/UBSan checks passed for mapped allocation policy,
+range tracker (240,000 oracle queries), writer tracker (10,000 allocation lifetimes), and
 native directory metadata including symlinks, malformed records and NFS.
 Heap stress (including ThreadSanitizer), targeted GPU completion and staging
-reclamation checks passed. The release hot-path check intentionally remains
-failing because the accumulated draft retains experimental timers. The host
+reclamation checks passed. The release hot-path check initially failed because
+that revision retained experimental timers; later changes removed those
+normal-build CPU probes and the required checks now pass, as recorded above and in the follow-ups. The host
 startup fixture now expects six progress slots and excludes the PS5 sampler
 on non-PS5 hosts. Related CPU/JIT sampling arrays were also expanded to six
 slots to fix an out-of-bounds read exposed by this fixture. See the PR description for the native build/check result.
@@ -1224,7 +1233,7 @@ The experiment restored executable, metadata, settings, owned controls/input;
 pipeline cache bytes match. Final verified direct-pool free/largest were
 431,652,864 / 228,589,568 bytes, with the separate 512 MiB reserve held.
 
-Oversized-index provenance candidate (not yet console-tested)
+Oversized-index provenance candidate (normal-input console run below)
 Patch 0007 adds a failure-only dump for a selected index span of at least
 256 MiB, at most once per process. It prints live index registers, copied draw
 state, shadow RAM/control and the last 48 already-recorded method writes.
@@ -1240,7 +1249,38 @@ failure's producer. No register-translation change follows from it.
 The current normal-input candidate (DEV_ROM_ID set; MKW_DIAGNOSTICS, DEV_VULKAN
 and DEV_PROFILE off) passed full native checks/build/link/package, including
 179 core cases / 2,239,932 assertions. Seven patches reproduce 142 files.
-It is queued for a normal-mode failure investigation with private crash-archive
-collection. The earlier a004c699 pre-shadow variant was never deployed.
+It was deployed for the normal-input investigation recorded below, with
+private crash-archive collection. The earlier a004c699 pre-shadow variant
+was never deployed.
   Eboot: d901552711f458233165e49b71d9a4ee219b8240d378d881267deb3c7520ad0f
   ELF:   9b55adf44a82432d9c3e62d86788a0523716b2fa66e1027ba401d5a6ced9452c
+
+Normal-input provenance run: short observation completed
+Run 1793692970464268178 used the seven-patch d9015527 artifact above, PID 814.
+DEV_ROM_ID enabled input controls; MKW_DIAGNOSTICS, DEV_VULKAN and DEV_PROFILE
+were off. Native Library navigation selected Mario Kart World in the preserved
+Handheld configuration. No diagnostic mode/settings switches were applied.
+GPT-6.1 Terra reviewed the title and successive Free Roam captures, then
+confirmed matching kart/camera position and fixed landmarks in neutral frames.
+The entry transition was excluded before approval.
+
+Fifteen complete five-second guest-frame batches after approval contained
+1,000 frames over 75.651333 seconds: 13.21854 FPS, worst frame 99.974 ms.
+This is a short static-scene observation, not an accuracy A/B or release result.
+No ordered-read trace was armed, so this run supplies no per-read wait or copy
+comparison. The process did not restart during the observation or subsequent
+short throttle/brake commands. Terra confirmed matching stationary before/after
+landmarks and clear throttle displacement from rock to grass, with plausible
+terrain, structures, HUD and lighting in sampled images. This is limited visual
+evidence rather than continuous gameplay qualification. The oversized-index
+condition did not reproduce;
+no MKW_INDEX_ORIGIN/SHADOW/RECENT dump was emitted. Its root cause remains open.
+
+The follow-up ps5-perf recording was refused because another sampling session
+was active. Its target and overlap are unknown; there is no fresh profile and
+these timings are not established as free from external sampling overhead.
+Executable, package metadata, development settings/input and both pipeline
+cache files were restored with byte verification; the runner completed with
+no restoration errors. Game settings were only read. Broad rendering, movement
+correctness, sustained memory stability and the 40/60 FPS targets remain
+unqualified. Private archives/captures and profiles are excluded from the PR.
