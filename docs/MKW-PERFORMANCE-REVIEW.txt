@@ -372,3 +372,18 @@ the expected wait-site count changing from six to seven and was not packaged.
 This bounded run completed without a fresh crash, with about 484 MiB as the
 largest free physical block at guest 250 s. Sustained stability and 40 FPS
 remain unproven. Original console files/settings/input were restored and verified.
+
+PR publication verification
+The accumulated snapshot reproduces four maintained patches across 130 core
+files at upstream 3140648a668aaebf87bae2dea17512fdca125ba0. Source whitespace
+checks passed. The producer-wait, download-batching and fence-requirement
+ASan/UBSan fixtures were rerun successfully in the prospero-win toolchain.
+Direct host runs failed because clang 18 selected incompatible GCC 16 C++
+headers; those failures were not counted as fixture passes.
+
+A subsequent completed-semaphore A/B was interrupted at its initial visual
+gate to publish this snapshot. It produced no comparison result. Its original
+executable, package metadata, settings and owned input controls were restored
+and verified before its console lease ended. No source changes or performance
+claim derive from that incomplete run. The release hot-path check remains
+unresolved in this snapshot; separate worktrees' results are not included.
