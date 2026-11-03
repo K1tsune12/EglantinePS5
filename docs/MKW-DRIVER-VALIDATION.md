@@ -591,3 +591,41 @@ payload's failed AvailableDirectMemorySize call must not be generalized to the
 app: its pre-OOM log reported a valid 32 MiB free block. A fixed budget figure
 alone therefore does not explain the OOM. No further memory-policy change is
 included in this candidate.
+
+
+Loading presentation ownership for split GPU execution
+-----------------------------------------------------
+
+Source review found that the frontend's LoadingTick presented Vulkan loading
+frames directly. With split GPU execution, the back thread owns the renderer
+and can composite guest frames concurrently. The fix sends loading presentation
+through the split queue, captures each HUD snapshot by value and mutates shared
+HUD storage only on the renderer owner. Loading completion, start time and frame
+count are atomic because the frontend updates them while the renderer reports
+the first guest frame. Queued loading work checks completion again on execution
+and drops itself after the first guest frame.
+
+This builds on the loading-owner fix in sibling investigation commit bf48c2c;
+the local implementation also confines HUD mutation to the owner and removes
+races in shared loading counters. It does not enable split execution or change
+accuracy settings by default. The actual LoadingTick host fixture passed
+AddressSanitizer/UndefinedBehaviorSanitizer and a separate ThreadSanitizer run:
+immediate/deferred presentation, owner-only HUD writes, independent queued
+snapshots, late-frame cancellation, concurrent guest transition and direct
+back-thread invocation. Existing HUD timing checks cover the pacing policy.
+
+The normal native build, 179 cases / 2,239,932 assertions, new fixture and package
+passed. Candidate eboot:
+`9c17df7405ce61c4c35a4d865aae4bd5c6ece6263fbfcfb99ccbb2571535cc0c`.
+Matched ELF:
+`e80e9ae4cb89b228cf43d412b461db83f08894352927875ac9a5df078054d8af`.
+The driver archive and six maintained core patches remain unchanged.
+
+A two-boot console comparison is queued under the shared lease. It changes only
+the existing per-game Fast GPU preference, off then on, with 1x resolution and
+frame generation off. Fast GPU explicitly selects Low GPU accuracy, which
+allows the existing split engine path; the normal High path remains the
+control. This is an accuracy-setting comparison, not evidence of a driver-only
+speedup. The runner records exact settings, bounded title intervals and images,
+and restores original preference bytes as well as package files. Console
+rendering, timing and preference restoration remain pending.
