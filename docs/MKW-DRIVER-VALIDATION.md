@@ -524,21 +524,22 @@ sparse texture uploads. Stack scanning can retain older call return addresses,
 so the full scanned list is not treated as a continuous backtrace.
 
 
-Scheduler handoff candidate awaiting console comparison
+Scheduler handoff candidate and completed on/off/on trial
 ------------------------------------------------------
 
 The generated native scheduler already separates the worker's event condition
 from queue-drain completion. Its optimized mode wakes the single worker with
 notify_one and only broadcasts a drain notification when the queue becomes
 empty and a drain waiter exists. The atomic selecting this mode previously
-defaulted false. The candidate defaults it true; the existing runtime control
-can still select either mode. No GPU accuracy, dependency, submission, fence
+defaulted false. The tested candidate defaulted it true; the existing runtime control
+can still select either mode. The retained default returns to false after the
+trial below failed to establish a benefit. No GPU accuracy, dependency, submission, fence
 or guest-memory coherence policy is changed.
 
 An initial core-source implementation duplicated this generated adaptation;
 it was discarded after the native pinned-anchor check rejected it. Its mock
 fixture passed sanitizers, but that does not establish a production change or
-gain. The retained candidate only changes the mode's default. The existing
+gain. The tested candidate only changed the mode's default. The existing
 actual generated scheduler fixture passed 120,000 FIFO commands in both modes,
 queue-drain versus final execution, stopped-worker wake and one drain wake per
 burst. The full normal native build, 179 cases / 2,239,932 assertions and
@@ -548,10 +549,41 @@ Candidate eboot:
 `766fd504fbde289993e4ade75b158527eafdc372af34523eee20203e2fd2c30b`.
 Matched ELF:
 `77d73c97643ba0a7ec099051aa15421e00bb5932a437c95a528367ebd544480b`.
-A bounded on/off/on comparison is queued under the shared console lease,
-verifying the native executable and single-byte mode atomic before any write.
-Console validation and any performance effect remain pending. This is not an
-established step toward >40 FPS until measured.
+Run `1793696847735593185` acquired the shared lease and launched fresh PID 824.
+ps5debug verified 32 live main-function bytes against the exact ELF, confirmed
+the mapped single-byte handoff atomic at runtime 0x4d78bf8 held 1, and read-back
+verified the bounded on/off/on writes. Terra inspected all seven title/phase
+captures: rendered palm-settlement, desert-valley, canyon and sandy-road title
+scenes, with no obvious major corruption or missing geometry.
+
+Full first-observed counter windows with two-second interval margins:
+
+| Mode | Frames / seconds | FPS | Worst frame | GPU CPU / context switches in subsequent 3 s stat |
+| --- | --- | --- | --- | --- |
+| On, first | 157 / 10.089246 | 15.561123 | 237.595 ms | 0.418 / 15,128 |
+| Off | 241 / 15.032019 | 16.032444 | 358.830 ms | 0.402 / 14,940 |
+| On, second | 156 / 10.087091 | 15.465311 | 220.508 ms | 0.403 / 17,886 |
+
+The camera/scenery and memory pressure evolved; these short intervals do not
+establish a controlled regression either. No consistent FPS or context-switch
+benefit is established. The >40 FPS objective remains unmet. The default-on
+source change is therefore removed; the tested alternative remains available
+through the existing control for further scoped diagnosis. No native rebuild
+is claimed for that restoration: the earlier 7050e969 executable remains the
+qualified default-off shader-cache artifact, and future builds must use the
+restored source rather than reusing the default-on package.
+
+Matched read-only counter snapshots around phases show driver allocations
+between 3,435.34 and 3,827.97 MiB and the app's sampled free-block counter falling
+from 1,708 MiB to 576 MiB. These are not simultaneous total-pool snapshots,
+and the app's free counter refreshes through its cache callbacks, so this is
+not a fresh direct-pool query. They do not
+explain every allocation or establish long-term memory stability. This bounded
+run completed without a detected core failure; it is not an OOM fix. The native
+atomic was restored to its original value 1 and read-back verified before app
+shutdown. The original console package files, metadata and controls were
+restored and hash verified, with idle confirmed before lease release. All three
+per-PID allocation/transcode dump files were absent.
 
 Memory-budget source review found that native generation already expresses
 cache usage and budget in the shared-pool callback's domain. The separate

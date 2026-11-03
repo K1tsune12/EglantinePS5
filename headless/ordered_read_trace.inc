@@ -15,8 +15,7 @@ static std::uint64_t last_polled_frame{};
 static std::uint64_t pending_nonce{};
 static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
-// Separate worker and drain conditions avoid redundant queue handoff syscalls.
-static std::atomic<bool> vulkan_handoff_enabled{true};
+static std::atomic<bool> vulkan_handoff_enabled{};
 // Diagnostic43: exercise range-local mapping updates during initial loading.
 static std::atomic<bool> mapping_enabled{true};
 static std::array<std::atomic<std::uint64_t>,2> mapping_operations{};
