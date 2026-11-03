@@ -1093,3 +1093,56 @@ heavy diagnostics; its memory/cache policies also differ from the diagnostic
 variant, so differences cannot be assigned solely to instrumentation overhead.
   Eboot: b8ccef29dd39244854c4aeb28c29d8e62cf4fd30e40e599407017d299764b56d
   ELF:   24db2ea72b14e461e7a95a64f92d408ee5df43a062c0e3a8d6f62d26c3c1d211
+
+Candidate: producer frontier for split command fetches (not console-qualified)
+Patch 0006 adapts the producer frontier and completion hint from Zortos commit
+d7ce3d8c0881fc605974d4747573e8a1fcadb37f. It is opt-in, diagnostic-only at the
+frontend: mkw-split-fetch-mode.txt=0 retains full command-fetch drains; 1 waits
+through the last potentially memory-producing ring entry. Other Drain callers,
+GPU completion waits, cache flushes and first-writer history checks remain.
+This frontier describes backend CPU execution; it is not itself proof that GPU
+work or GPU cache writeback completed.
+
+Ordinary method-sink appends and engine switches cannot execute GPU work.
+Direct/multi 3D state writes are excluded only when the front's existing mirror
+also proves no deferred draw can be pending. Compute, executable methods,
+uploads, arbitrary callbacks and unknown callers remain conservative hazards.
+Consumed positions are published with release/acquire ordering; a request is
+only a hint to acknowledge a completed prefix, never evidence of completion.
+A late request can still wait for a subsequent publication point; the proposed
+optimization is not assumed to remove every tail wait.
+
+The bounded trace now records every accepted command-fetch wait separately in
+fetch-waits.csv (begin/end time, guest-frame IDs, producer target, queued end,
+observed completion and mode). Separate attempted/drop/completeness fields
+prevent missing events from appearing to be fewer waits. Both streams share
+the export lifetime, so an in-flight fetch prevents premature export. Ordered
+CPU-read counts and individual durations remain independent. The analyzer
+emits fetch durations and per-frame overlap/counts, rejects incomplete or
+invalid fetch captures, and marks legacy fetch metrics unavailable explicitly.
+No per-event file I/O occurs in the recording window.
+
+Actual ring/dispatch/drain methods pass ASan/UBSan and TSan tests for the first
+queued writer, unrelated state tail, full/narrow ordering, mid-batch completion,
+conservative callbacks/multi writes and restart reset. The actual FrontWrite
+classification is exercised at the ring call site. Actual trace storage passes
+ASan/UBSan and TSan checks for shared read/fetch lifetime, cross-frame completion,
+overflow and concurrency. Analyzer checks cover real-frame overlap clipping,
+invalid/incomplete/legacy inputs; a measured 1,926-read legacy trace reanalyzes
+with unchanged read counts. Source synchronization now hashes untracked headers
+from the core directory, verified with real content changes and spaced names.
+
+Both candidate configurations completed full native checks/build/link/package
+with source checks enabled: each passed 179 core cases / 2,239,932 assertions.
+Normal mode has no fetch timing calls and cannot enable this experiment. Six
+maintained patches now reproduce 142 core files. Neither candidate variant has
+been console-tested; no FPS or wait reduction is claimed for this patch yet.
+The planned same-run OFF/ON/OFF/ON windows use five frames apiece because the
+observed roughly 7,000 command fetches/frame need to fit the 65,536-event bound.
+
+Candidate diagnostic eboot / matched ELF:
+  f68f0596ab0ce030a9befdbf7437ef7bc34f0eb388fa5253da6eb23d4ae555a3
+  11a9edb45d358c17dcabe4c44d030d47a577b09105094a3bbcde57fb7ca745a6
+Candidate normal eboot / matched ELF:
+  dedc01bab020132edaf2b055998eea3ef6e4ece6337813d928a5f2a104f32699
+  cd32956d17768c6236d7a990dd6b0a304fcbd12e620eed99c92bb141d5ec1789

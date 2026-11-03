@@ -83,6 +83,8 @@ if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
     python3 -B "$root/tools/check-download-copy-batches.py"
     python3 -B "$root/tools/check-mapped-producer-wait.py"
     python3 -B "$root/tools/check-submitted-commands.py"
+    python3 -B "$root/tools/check-split-command-frontier.py"
+    python3 -B "$root/tools/check-split-fetch-trace.py"
     python3 -B "$root/tools/check-memory-probes.py"
     python3 -B "$root/tools/check-pipeline-preload.py"
     python3 -B "$root/tools/check-shader-module-cache.py"

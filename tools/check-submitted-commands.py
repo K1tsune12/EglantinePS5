@@ -22,6 +22,7 @@ struct GpuSplit {
  static GpuSplit& Get(){static GpuSplit split;return split;}
  bool Active(){return bool(drain);}
  void Drain(){drain();}
+ void DrainCommandReads(){drain();}
 };
 enum class CacheType{BufferCache};
 }

@@ -16,6 +16,12 @@ static std::uint64_t pending_nonce{};
 static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
 static std::atomic<bool> command_snapshot_enabled{};
+#ifdef EDEN_MKW_DIAGNOSTICS
+static std::atomic<bool> split_fetch_frontier_enabled{};
+static constexpr unsigned fetch_tracing_available = 1;
+#else
+static constexpr unsigned fetch_tracing_available = 0;
+#endif
 static std::atomic<std::uint64_t> command_snapshot_bytes{};
 static std::atomic<bool> command_capture_at_arm{};
 static std::array<std::atomic<std::uint64_t>, 6> command_fetch_counts{};
@@ -113,6 +119,20 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
         }
         copies_ok = std::fclose(output) == 0;
     }
+    std::snprintf(path, sizeof(path), "%s-fetch-waits.csv", prefix);
+    bool fetch_ok = false;
+    if (FILE* output = std::fopen(path, "w")) {
+        std::fputs("id,begin_ns,end_ns,start_frame,end_frame,target,queued_end,consumed_before,mode\n", output);
+        for (std::size_t i = 0; i < c.FetchCount(); ++i) {
+            const auto& e = c.fetches[i];
+            const std::uint64_t values[]{i,e.begin_ns,e.end_ns,e.start_frame,e.end_frame,
+                e.target,e.queued_end,e.consumed_before,e.mode};
+            for (unsigned k = 0; k < std::size(values); ++k)
+                std::fprintf(output, k ? ",%" PRIu64 : "%" PRIu64, values[k]);
+            std::fputc('\n', output);
+        }
+        fetch_ok = std::fclose(output) == 0;
+    }
     std::snprintf(path, sizeof(path), "%s-meta.txt", prefix);
     if (FILE* meta = std::fopen(path, "w")) {
         std::fprintf(meta, "version=4\nnonce=%" PRIu64 "\ncount=%zu\nattempted=%" PRIu64
@@ -126,6 +146,10 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
                      "\ncopy_dropped=%" PRIu64 "\ncopy_complete=%d\n",
                      c.CopyCount(), c.copy_next.load(), c.copy_dropped.load(),
                      int(copies_ok && c.copy_dropped.load() == 0));
+        std::fprintf(meta, "fetch_waits=%u\nfetch_count=%zu\nfetch_attempted=%" PRIu64
+                     "\nfetch_dropped=%" PRIu64 "\nfetch_complete=%d\n",
+                     fetch_tracing_available,c.FetchCount(),c.fetch_next.load(),c.fetch_dropped.load(),
+                     int(fetch_ok && c.fetch_dropped.load() == 0));
         std::fprintf(meta, "gpu_command_capture_at_arm=%u\n", unsigned(command_capture_at_arm.load()));
         std::fclose(meta);
     }
@@ -169,6 +193,14 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
                 std::remove(pool_path);
                 if (valid) ::Eden::Performance::ReportDirectPool(nonce);
             }
+        }
+#endif
+#ifdef EDEN_MKW_DIAGNOSTICS
+        if (const auto mode = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-split-fetch-mode.txt");
+            mode && *mode <= 1) {
+            split_fetch_frontier_enabled.store(*mode != 0, std::memory_order_release);
+            std::printf("MKW_SPLIT_FETCH_MODE frame=%llu mode=%llu\n",
+                        static_cast<unsigned long long>(frame),*mode);
         }
 #endif
         const char* snapshot_path = "/data/homebrew/PPSA98515/mkw-command-snapshot-mode.txt";
@@ -455,4 +487,33 @@ extern "C" void eden_command_snapshot_captured(std::uint64_t bytes) {
 }
 extern "C" void eden_command_snapshot_fetch(unsigned reason, std::uint64_t) {
     if (reason < 6) Eden::OrderedReadTrace::command_fetch_counts[reason].fetch_add(1, std::memory_order_relaxed);
+}
+
+// The experiment is off in normal builds. Captured command-fetch waits remain
+// separate from guest CPU ordered reads, so their counts cannot mask each other.
+extern "C" bool eden_split_fetch_frontier_enabled() {
+#ifdef EDEN_MKW_DIAGNOSTICS
+    return Eden::OrderedReadTrace::split_fetch_frontier_enabled.load(std::memory_order_acquire);
+#else
+    return false;
+#endif
+}
+extern "C" std::uint64_t eden_split_fetch_begin(std::uint64_t target,
+                                               std::uint64_t queued_end,
+                                               std::uint64_t consumed_before,
+                                               unsigned mode) {
+#ifdef EDEN_MKW_DIAGNOSTICS
+    using namespace Eden::OrderedReadTrace;
+    auto* c = capture.load(std::memory_order_acquire);
+    if (c && c->phase.load(std::memory_order_acquire) == Capture::Recording)
+        return c->BeginFetch(VideoCommon::ReadbackDependencyDiagnostics::Now(),target,
+                             queued_end,consumed_before,mode);
+#endif
+    return ~std::uint64_t{0};
+}
+extern "C" void eden_split_fetch_end(std::uint64_t index) {
+#ifdef EDEN_MKW_DIAGNOSTICS
+    auto* c = Eden::OrderedReadTrace::capture.load(std::memory_order_acquire);
+    c->EndFetch(index,VideoCommon::ReadbackDependencyDiagnostics::Now());
+#endif
 }

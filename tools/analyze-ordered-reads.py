@@ -33,6 +33,50 @@ def write_csv(path, rows):
             writer.writerows(rows)
 
 
+def analyze_fetch_waits(prefix, meta, times, frame_ids=None):
+    """Keep frontend fetch waits separate from guest ordered-read counts."""
+    if meta.get('fetch_waits') != '1':
+        return {'available': False}
+    if meta.get('fetch_complete') != '1' or int(meta.get('fetch_dropped', '-1')):
+        raise ValueError('Incomplete command-fetch wait capture')
+    with Path(str(prefix)+'-fetch-waits.csv').open() as source:
+        rows = [{k: int(v) for k,v in row.items()} for row in csv.DictReader(source)]
+    assert len(rows) == int(meta['fetch_count']) == int(meta['fetch_attempted'])
+    assert [row['id'] for row in rows] == list(range(len(rows)))
+    nframes = len(times)-1
+    frames = [dict(frame=frame_ids[i] if frame_ids is not None else i, requests=0, producer_pending_at_entry=0,
+                   queued_tail_requests=0, overlap_ns=0) for i in range(nframes)]
+    durations = []
+    for row in rows:
+        begin,end = row['begin_ns'],row['end_ns']
+        assert 0 < begin <= end
+        assert row['mode'] in (0,1) and 0 <= row['target'] <= row['queued_end']
+        assert 0 <= row['consumed_before'] <= row['queued_end']
+        assert row['mode'] or row['target'] == row['queued_end']
+        row['duration_ns'] = end-begin
+        row['producer_pending_at_entry'] = int(row['consumed_before'] < row['target'])
+        row['queued_tail_words'] = max(0,row['queued_end']-max(row['target'],row['consumed_before']))
+        durations.append(end-begin)
+        i = bisect.bisect_right(times,begin)-1
+        if 0 <= i < nframes:
+            frames[i]['requests'] += 1
+            frames[i]['producer_pending_at_entry'] += row['producer_pending_at_entry']
+            frames[i]['queued_tail_requests'] += bool(row['queued_tail_words'])
+        for k in range(max(0,i),min(nframes,bisect.bisect_left(times,end))):
+            frames[k]['overlap_ns'] += max(0,min(end,times[k+1])-max(begin,times[k]))
+    write_csv(Path(str(prefix)+'-fetch-durations.csv'),rows)
+    write_csv(Path(str(prefix)+'-fetch-summary.csv'),frames)
+    return dict(available=True,requests=len(rows),requests_per_frame=len(rows)/nframes,
+                starts_outside_timestamp_window=len(rows)-sum(frame["requests"] for frame in frames),
+                producer_pending_at_entry=sum(row['producer_pending_at_entry'] for row in rows),
+                queued_tail_requests=sum(bool(row['queued_tail_words']) for row in rows),
+                cpu_ms=sum(durations)/1e6,overlap_cpu_ms=sum(row['overlap_ns'] for row in frames)/1e6,
+                median_ms=percentile(durations,.5)/1e6,p95_ms=percentile(durations,.95)/1e6,
+                max_ms=max(durations,default=0)/1e6,
+                modes=dict(collections.Counter(row['mode'] for row in rows)),
+                caveat='Pending-at-entry is a producer observation, not proof the thread slept. Fetch waits and ordered CPU reads can overlap; do not add them as a wall-frame partition.')
+
+
 def analyze(prefix, allow_incomplete_copy_sources=False):
     meta = dict(line.split('=', 1) for line in Path(str(prefix) + '-meta.txt').read_text().splitlines() if '=' in line)
     if meta.get('complete') != '1' or int(meta.get('dropped', '-1')) or int(meta.get('inflight', '-1')):
@@ -246,6 +290,7 @@ def analyze(prefix, allow_incomplete_copy_sources=False):
             caveat='copy_tick identifies the staging-copy submission, not necessarily the original writer; allocation_id=0 lacks lifetime identity; candidate producer coverage is diagnostic and cannot authorize wait bypass')
         write_csv(Path(str(prefix)+'-copy-sources.csv'),source_rows)
     scalar = [r for r in reads if r.get('scalar_valid')]
+    result['command_fetch_waits'] = analyze_fetch_waits(prefix,meta,times,[b['frame'] for b in bounds[1:]])
     same = [r for r in scalar if r['value_before'] == r['value_after']]
     result['scalar_snapshots'] = dict(count=len(scalar), same_value=len(same),
         same_value_call_cpu_ms=sum(r['duration_ns'] for r in same)/1e6,

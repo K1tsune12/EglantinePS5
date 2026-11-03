@@ -20,6 +20,9 @@ builds on the following projects, each under its own license.
   The opt-in bounded command snapshots adapt kraibse's `cce6d44af2`
   (ported upstream from Wael3rd/Eglantine-MKW `bd3119a86f`) and the
   GPU-written/snapshot ordering corrections in `6612817cb4` and `fae3bc64`.
+  The opt-in command-fetch frontier experiment adapts the producer frontier,
+  completion hint and conservative state-write classification from Zortos commit
+  `d7ce3d8c0881fc605974d4747573e8a1fcadb37f`, GPL-3.0-or-later.
 - **[Catch2](https://github.com/catchorg/Catch2)**, BSL-1.0. Used by the focused
   host regression check at the version and source hash pinned by the core.
 - **[FFmpeg](https://ffmpeg.org)**, LGPL-2.1-or-later. Built from Eden's pinned
