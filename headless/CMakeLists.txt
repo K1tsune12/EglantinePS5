@@ -708,7 +708,7 @@ foreach(bits 32 64)
         set(mkw_exit_pc "m_jit->Regs()[15]")
         set(mkw_slow_run "")
     endif()
-    if(NOT EDEN_DEV_PROFILE)
+    if(EDEN_MKW_DIAGNOSTICS AND NOT EDEN_DEV_PROFILE)
         string(PREPEND wrapper "#include \"${EDEN_PORT_DIR}/performance.h\"\n#include \"core/hle/kernel/k_thread.h\"\n")
         string(REPLACE "    return TranslateHaltReason(m_jit->Run());"
             "    const auto mkw_tid = thread ? thread->GetThreadId() : 0;\n    ::Eden::Performance::NoteRunning(mkw_tid, ::Eden::Performance::NowNs());\n    ::Eden::Performance::Timer mkw_run_timer(::Eden::Performance::mkw_guest_run[mkw_tid < 512 ? mkw_tid : 511]);\n    const auto mkw_start = ::Eden::Performance::NowNs();\n    const auto mkw_halt = m_jit->Run();\n    ::Eden::Performance::MkwRecordRunExit(mkw_tid, ${mkw_exit_pc}, ::Eden::Performance::NowNs() - mkw_start);\n${mkw_slow_run}    return TranslateHaltReason(mkw_halt);"
@@ -838,6 +838,15 @@ string(REPLACE "${idle_old}" [=[void PhysicalCore::Idle() {
 }
 
 ]=] physical_core_source "${physical_core_source}")
+if(NOT EDEN_DEV_PROFILE AND NOT EDEN_MKW_DIAGNOSTICS)
+    foreach(probe IN ITEMS
+            "    const long long start = ::Eden::Performance::NowNs();\n"
+            "    bool slept;\n"
+            "        slept = !m_is_interrupted;\n"
+            "    ::Eden::Performance::CountIdle(m_core_index, ::Eden::Performance::NowNs() - start, slept);\n")
+        string(REPLACE "${probe}" "" physical_core_source "${physical_core_source}")
+    endforeach()
+endif()
 string(REPLACE "${prefetch_old}"
     "            } else {\n                interface->LogBacktrace(process);\n                if (prefetch_abort)\n                    ::Eden::RecordGuestFault(\"guest thread \" + Core::GetThreadName(thread).value_or(\"?\") +\n                                             \" jumped to an unmapped address\");\n            }\n            thread->RequestSuspend(kernel, SuspendType::Debug);"
     physical_core_source "${physical_core_source}")
@@ -1417,6 +1426,7 @@ if(finish_offset LESS 0)
 endif()
 string(REPLACE "${old_finish}" "        {\n            KScopedSchedulerLock sl{kernel};\n            m_signaled = true;\n            KSynchronizationObject::NotifyAvailable(kernel);\n        }\n\n        // Finalization may block; scheduling must be enabled here.\n        this->Close(kernel);" thread_source "${thread_source}")
 
+if(EDEN_DEV_PROFILE OR EDEN_MKW_DIAGNOSTICS)
 # Which guest thread was blocked, on what, and for how long. A core with nothing to run reads the
 # same whether its thread is asleep until a timeout or waiting on something only the GPU thread can
 # signal, and only one of those is ours to fix. BeginWait stamps the thread; SetState is the single
@@ -1475,6 +1485,7 @@ string(REPLACE "${wait_end}" [=[    void KThread::SetState(KernelCore& kernel, T
             ::Eden::Performance::NoteRunnable(GetThreadId(), ::Eden::Performance::NowNs());
         }]=] thread_source "${thread_source}")
 
+endif()
 write_derived("${PORT_BUILD_DIR}/k_thread.cpp" "#include \"${EDEN_PORT_DIR}/performance.h\"\n${thread_source}")
 get_target_property(core_sources core SOURCES)
 list(REMOVE_ITEM core_sources hle/kernel/k_thread.cpp)

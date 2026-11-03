@@ -1,4 +1,4 @@
-Mario Kart World PS5 performance review — 2026-11-02
+Mario Kart World PS5 performance review — 2026-11-03
 
 Scope
 This draft preserves the accumulated investigation, including experimental
@@ -6,6 +6,13 @@ instrumentation, as requested. The core remains Zortos 3140648a668aaebf87bae2dea
 Maintained patch 0004 is incremental over the existing three patches. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
+
+Current build status: normal and MKW diagnostic configurations pass all required
+native build checks without EDEN_SKIP_SOURCE_CHECKS. The earlier release CPU
+instrumentation failure recorded below is resolved by the final follow-up.
+Neither newly checked artifact has been console-qualified; the queued fixed
+location experiment retains its separately verified earlier diagnostic artifact.
+Sustained memory stability and the 40 FPS goal remain unproven.
 
 The accumulated changes cover task/mesh shader handling, GPU mapping and
 readback tracking, bounded texture uploads and ASTC decoding, staging
@@ -702,3 +709,40 @@ before measurement, rather than rely on the title shortcut. A private controller
 runner with bounded commands and fresh captures at a navigation gate has been
 prepared for that purpose; it has only passed Python syntax checks, not console
 navigation validation yet.
+
+Follow-up: remove CPU timing probes from normal builds
+The generated ARM32/ARM64 wrappers previously added MKW run timing whenever the
+full profiler was off, including normal builds. Guest thread wait/state changes
+and idle waits also collected diagnostic times in normal builds. This made the
+release performance check fail and left measurement work on production paths.
+
+Three configuration guards adapted from local driver worktree commit 9e73c52
+now keep the MKW run probes behind EDEN_MKW_DIAGNOSTICS and the scheduler/idle
+probes behind that option or EDEN_DEV_PROFILE. Normal execution, interrupt
+handling, wait predicates and notification order are unchanged. No driver
+selection, archive, allocation policy or core patch was imported with them.
+
+The generated-source checker now distinguishes explicitly enabled diagnostic
+wrappers from normal wrappers. It requires the run/scheduler/idle probes to be
+absent from normal generated sources and present in diagnostic sources, while
+retaining the prohibition on low-level JIT compiler timing. Saved generated
+files were compared across both actual configurations, not just a CMake text
+search. The full profiler configuration was not rebuilt in this follow-up.
+
+Both native builds used EDEN_SKIP_SOURCE_CHECKS=0 and completed all required
+checks, linking and packaging. Each passed 179 core cases / 2,239,932 assertions,
+alongside the loader, launcher, file budget, worker, JIT, exclusive-monitor,
+shutdown, staging, producer/completion and focused readback/pipeline fixtures.
+The known release instrumentation check failure is therefore resolved. This
+does not qualify normal gameplay or demonstrate an FPS improvement.
+
+Normal build (MKW diagnostics, DEV Vulkan, DEV profile and DEV ROM ID all off):
+  eboot e5892968a7e3a639f8c8a0416722883dd33c4e548b03f6f7cff1faa0a64ffc56
+  ELF   ab015977564d5311fc047037a21e381d04ed2ebc776062f632dbcf948d474a3c
+MKW diagnostics on, other DEV options off:
+  eboot 8526c257a3db531ee00954fedb5f271099ec7483a6aafa5c3232b7c99074d1a4
+  ELF   6c3890c5aa4655edbfccc4dbea0a343cee8153eea155a798c24c57eff05bc08f
+Both retain the previously recorded isolated RADV archive and Zortos gitlink.
+These artifacts have not been deployed or console-tested. The already queued
+navigation comparison uses the earlier c81791b3 diagnostic artifact with its
+original symbols/settings receipt; it cannot validate this normal configuration.
