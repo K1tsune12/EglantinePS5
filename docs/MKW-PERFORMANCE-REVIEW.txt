@@ -8,7 +8,8 @@ Maintained patch 0004 is incremental over the existing three patches; patch
 opt-in command-fetch frontier experiment, and 0007 records oversized-index
 provenance on failure. Patch 0008 extends the experimental frontier to compute
 store-only writes; patch 0009 adds a separate opt-in idle-spin experiment.
-Nine maintained patches reproduce 143 core files. The
+Patch 0010 protects CPU writes from pending fence copies; ten maintained
+patches reproduce 145 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
@@ -1363,3 +1364,31 @@ a matched-ELF three-second profile only after all comparison windows; it never
 resets the shared sampler. The spin candidate is prepared separately and has
 not been queued. It will need its own same-scene read/copy/fetch and CPU-counter
 comparison before any default change is justified.
+
+Pending-fence CPU-write integrity correction (host verified)
+A source audit of Zortos 5bef7354b464a38527864756814cc6e0f0fc6567 exposed
+three concrete defects still present in this port's base. An extracted-method
+reproducer using the actual OnCPUWrite, ClearDownload, PopAsyncBuffers, common
+range sets and memory-write callback failed three scenarios (11 byte/contract
+assertions): a completed old fence overwrote newer CPU bytes; an older copy
+consumed a newer fence's overlap count and prevented its writeback; and the
+second write to the same page skipped OnCPUWrite. These are host reproductions,
+not proof that the prior console's malformed index words had this cause.
+
+Patch 0010 adapts the focused upstream correction: invalidate pending copies
+immediately before a deferred CPU store, cut those bytes out of every queued
+fence copy while decrementing each copy's own overlap count, and call the
+rasterizer-write protection hook for every write instead of caching permission
+by page. Existing alias traversal, cache locks and deferred upload remain. No
+guest RAM import, wait bypass, index clamp, draw suppression or driver change
+is introduced. This correction is generic, with no title-ID gate.
+
+All three scenarios now pass. An independent 20,000-event byte/validity-mask
+oracle also checks partial writes, overlapping pending fences, staging offsets,
+per-byte pending counts, ordered retirement and zero-address/size callbacks.
+ASan/UBSan and TSan-instrumented fixtures pass. The fixture owns host staging
+memory and mocks device/tracker plumbing; it does not validate real Vulkan
+cache visibility, GPU scheduling or console performance. The broader upstream
+pending-fence read-reuse planner/selection-epoch optimization is not included.
+Ten maintained patches reproduce 145 core files. Combined native artifact
+validation, including the separate port loading correction, follows below.
