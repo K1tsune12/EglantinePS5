@@ -82,6 +82,7 @@ if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
     python3 -B "$root/tools/check-fence-requirements.py"
     python3 -B "$root/tools/check-fence-readback-integrity.py"
     python3 -B "$root/tools/check-vulkan-loading-owner.py"
+    python3 -B "$root/tools/check-texture-retirement.py"
     python3 -B "$root/tools/check-download-copy-batches.py"
     python3 -B "$root/tools/check-mapped-producer-wait.py"
     python3 -B "$root/tools/check-submitted-commands.py"

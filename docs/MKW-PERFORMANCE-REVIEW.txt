@@ -8,18 +8,19 @@ Maintained patch 0004 is incremental over the existing three patches; patch
 opt-in command-fetch frontier experiment, and 0007 records oversized-index
 provenance on failure. Patch 0008 extends the experimental frontier to compute
 store-only writes; patch 0009 adds a separate opt-in idle-spin experiment.
-Patch 0010 protects CPU writes from pending fence copies; ten maintained
-patches reproduce 145 core files. The
+Patch 0010 protects CPU writes from pending fence copies. Patch 0011 adds an
+opt-in submission-completion texture retirement experiment; eleven maintained
+patches reproduce 147 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
-Latest build status: the combined ten-patch fence-integrity and port loading-owner
-candidate passes full normal and diagnostic native checks/build/link/package,
-with 179 core cases / 2,239,932 assertions each. The diagnostic console run
-rendered the title and main menu, then failed on a 31,195,136-byte device-local
-buffer allocation before Free Roam. No new FPS result is available. The earlier
-eight-patch attempt failed during first presentation; both failures are recorded
-below. The combined normal artifact remains untested on console.
+Latest build status: the eleven-patch retirement experiment passes full normal
+and diagnostic native checks/build/link/package, with 179 core cases / 2,239,932
+assertions each. Its diagnostic console pair is queued; no new FPS result is
+available. The preceding ten-patch diagnostic rendered the title/main menu,
+then failed on a 31,195,136-byte device-local buffer allocation before Free Roam.
+The earlier eight-patch attempt failed during first presentation. These failures
+remain unresolved; the latest normal artifact is untested on console.
 
 Earlier build sequence: the six-patch normal and MKW diagnostic configurations
 passed all required native checks/build/link/package without
@@ -1480,3 +1481,58 @@ restored and verified; both pipeline-cache files match their original bytes.
 Private captures, crash archives and control files remain excluded from the PR.
 This latest failure remains unresolved; sustained memory stability and the
 40/60 FPS targets remain unmet.
+
+Submission-completion texture retirement (host verified; console pair queued)
+The texture cache normally retains deleted images, image views and framebuffers
+in eight-frame rings. Patch 0011 adds an opt-in alternative selected per boot by
+EDEN_PS5_COMPLETION_RETIREMENT=1. Deletion records the Vulkan scheduler's current
+submission tick, including commands still queued on its recording worker.
+Only IsFree(tick), the completed GPU timeline, permits reclamation. The scheduler
+advances the logical tick before queueing submission, so future recording does
+not reuse an earlier submission's completion. No extra submit or wait is added.
+Completed framebuffers, views and images are collected in that order before
+pressure accounting and another eviction pass. Pending image-download ownership
+and immediate-delete callers keep their existing behavior. Other backends and
+the default path retain frame-based destruction.
+
+Bounded retired-object telemetry reports image allocation bytes and object
+counts for either policy every 60 frames (at most 256 rows); these are diagnostic
+observations, not a physical-pool total. It does not count all driver/CPU memory.
+This experiment tests whether already-deleted images retain useful headroom;
+the prior logs do not prove that retained images caused the allocation failure.
+
+The actual queue/policy helper and extracted Vulkan runtime hooks pass ASan/UBSan
+and ThreadSanitizer for both modes, including unsubmitted worker ownership,
+delayed completion, move-only lifetimes, default/fallback frame policy and an
+independent 20,000-object lifetime model. Mock scheduler/GPU completion is not
+on-console Vulkan lifetime validation. Both normal and diagnostic full native
+sync/check/build/link/package chains pass with source checks enabled, each with
+179 core cases / 2,239,932 assertions. Eleven patches reproduce 147 core files.
+The unchanged diagnostic driver archive remains fdd18c8d492e9b7abf4324bfeacd4fb5b4134059f8c72ef7eb801b66c9c54e98.
+  Diagnostic eboot: e60341adc418c022575ab35b3806b7425680394943fa30f566b86ce0cfe253c8
+  Diagnostic ELF:   ecaa7dfa5ddb52aab0d047882c16432e8eb826ba94079c31c80f0f99ed9b00ee
+  Normal eboot:     cd389f7bba26131ae6323111f0733868b65d1dec105112e10de24d6e6c535fce
+  Normal ELF:       a84620df6e7c8f6f330145b36f0e4ad6de8545477c8adf48eff30fec067b19a7
+A single owned on/off pair using the frozen diagnostic artifact is queued behind
+live console tasks. The pair stops on its first failure and preserves/restores
+settings and persisted cache bytes. No console, memory or FPS gain is claimed.
+The normal artifact has not been console-tested.
+
+SDK completion-counter analysis (read-only; no guest-code patch)
+The existing six-patch run 1793691106480785666 contains 20 long scalar reads in
+20 captured frames. Nineteen read the same counter; 18 share one caller block.
+Local SDK build ID 7A68B13D88183767FB9C7BABFFE89F3D368752E2 matches that run's
+module log. All three decompressed NSO segment SHA256 hashes match their header.
+A focused ordinary LLVM disassembly (REA provider unavailable) identifies the
+32-bit completion-counter comparison and wait helper. X23 matches each of the
+19 counter addresses, and X24 holds its target. All 19 pre-queue value snapshots
+already satisfy the helper's signed-difference test, although 19 long reads also
+observe newer values after waiting. Thus a changing value alone does not prove
+that the reader needed to wait for that newer release.
+
+The recorded PC is caller/block context, not an exact load-instruction address.
+Pre-queue values are unsynchronized observations, not validated producer/range
+certificates. This supports auditing completed-range service and cache-lock
+rejections; it does not justify returning arbitrary stale data, removing waits
+or relaxing alias/remapping protection. No guest-code patch or CPU-read bypass
+was implemented. Extracted game code and raw registers remain private.
