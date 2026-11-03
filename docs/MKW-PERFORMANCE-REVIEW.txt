@@ -13,7 +13,13 @@ patches reproduce 145 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
-Current build status: the six-patch normal and MKW diagnostic configurations
+Latest build status: the combined ten-patch fence-integrity and port loading-owner
+candidate passes full normal and diagnostic native checks/build/link/package,
+with 179 core cases / 2,239,932 assertions each. Its console test is queued.
+The earlier eight-patch console comparison failed before measurement; see the
+attributed first-presentation crash below. No new FPS result is available.
+
+Earlier build sequence: the six-patch normal and MKW diagnostic configurations
 passed all required native checks/build/link/package without
 EDEN_SKIP_SOURCE_CHECKS; the seven-patch normal-input provenance configuration
 also passed that full chain. Each passed 179 core cases / 2,239,932 assertions.
@@ -1392,3 +1398,57 @@ cache visibility, GPU scheduling or console performance. The broader upstream
 pending-fence read-reuse planner/selection-epoch optimization is not included.
 Ten maintained patches reproduce 145 core files. Combined native artifact
 validation, including the separate port loading correction, follows below.
+
+Eight-patch console attempt: first-presentation crash, no comparison
+Run 1793696749674028938 deployed frozen eight-patch 130c01e8 (matched ELF
+d25f5443, PID 821). It restarted while waiting for the initial 800-frame gate,
+before any visual approval, ordered-read trace, OFF/ON phase, FPS qualification
+or sampled profile. The runner stopped on that first restart (terminal 1).
+The retained crash-20261103-060729 report records SIGSEGV at address zero on
+GPUBack, 64 seconds after launch, with a 7,087 MiB largest free block of
+12,224 MiB. Matched code size, symbolization and chronology tie it to this run;
+the two older crash archives collected alongside it are not attributed here.
+
+Fault ELF 0x14d5f71 / runtime 0x18d5f71 is Layer::ConfigureDraw, dereferencing
+the descriptor-set array's null storage at image index zero. The stack scan
+also includes BlitScreen::DrawToFrame and RendererVulkan::Composite; scanned
+return addresses remain candidates rather than a fully unwound call stack.
+Earlier log messages include unmapped device reads. There is no observed
+allocation failure in this crash, and no evidence that the opt-in frontier
+(which was still off) caused it. The exact runtime corruption cause is open.
+Application/metadata/settings/input restoration verified; both persisted cache
+files match their original bytes, and game configuration restoration verified.
+
+PS5 loading presentation ownership correction
+The source has a concrete competing-owner path consistent with the crash: the
+GPU frontend calls LoadingTick, which records PresentLoading using the same
+renderer/scheduler/blit_swapchain that GPUBack uses for the first Composite.
+The loading call supplies zero framebuffers; DrawToFrame clears/recreates its
+shared layer vector when the count changes, while a guest frame can use a layer.
+The loading-active flag was also an ordinary bool read/written across threads.
+Static inspection establishes that race opportunity, not its exact runtime
+interleaving in PID 821. The fault-site inspection used matched-ELF LLVM tools.
+
+The port now routes loading ticks through GpuSplit::Defer/Drain once splitting
+is active. The GPU owner checks the atomic loading latch again after earlier
+work: if the first guest frame ended loading, the stale loading callback draws
+nothing. Inactive splits keep the inline loading path. Guest frame rendering
+and ordering are unchanged; this does not suppress a guest draw or clamp data.
+The helper uses a trivially copyable, const-callable closure accepted by the
+real split thunk. Its threaded mock-FIFO fixture checks inactive/backend calls,
+no concurrent renderer access, first-frame cancellation and deferred lifetime
+under ASan/UBSan and TSan. It does not emulate Vulkan resources or prove the
+console's first-presentation failure is resolved.
+
+Both combined normal/diagnostic native chains completed with source checks on,
+including both new fixtures and all 179 core cases / 2,239,932 assertions each.
+  Diagnostic eboot: 04b1fe0c976e40a79c422167d73e99023a6e7994eed2631faa2ef528b69c75d2
+  Diagnostic ELF:   364af8a6d4756092894be997d20f71de5b08cda07a2a05692ba27c40bd5c78a3
+  Normal eboot:     e1099c69c6f1b550db686e3f38355f90d03a4357254e5e1cbfd2c0baef5a3d1b
+  Normal ELF:       0561f9845e2b54570f133ddd264b5bf012587811d499e6225a78746986603c4e
+The driver archive remains fdd18c8d492e9b7abf4324bfeacd4fb5b4134059f8c72ef7eb801b66c9c54e98.
+The corrected diagnostic run is queued behind another live console test. It
+keeps the original 8,192 idle-spin budget and will compare frontier OFF/ON only
+after reviewed, settled Free Roam. The nine-patch idle-spin binary was never
+deployed. Neither combined artifact has a console result yet; no FPS, rendering
+or sustained-stability gain is claimed.
