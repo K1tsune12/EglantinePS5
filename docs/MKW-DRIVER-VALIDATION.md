@@ -522,3 +522,40 @@ VK_ERROR_OUT_OF_DEVICE_MEMORY, largest free direct block 1 MiB. The verified
 call sites include CreateBuffer and staging allocation/recovery while preparing
 sparse texture uploads. Stack scanning can retain older call return addresses,
 so the full scanned list is not treated as a continuous backtrace.
+
+
+Scheduler handoff candidate awaiting console comparison
+------------------------------------------------------
+
+The generated native scheduler already separates the worker's event condition
+from queue-drain completion. Its optimized mode wakes the single worker with
+notify_one and only broadcasts a drain notification when the queue becomes
+empty and a drain waiter exists. The atomic selecting this mode previously
+defaulted false. The candidate defaults it true; the existing runtime control
+can still select either mode. No GPU accuracy, dependency, submission, fence
+or guest-memory coherence policy is changed.
+
+An initial core-source implementation duplicated this generated adaptation;
+it was discarded after the native pinned-anchor check rejected it. Its mock
+fixture passed sanitizers, but that does not establish a production change or
+gain. The retained candidate only changes the mode's default. The existing
+actual generated scheduler fixture passed 120,000 FIFO commands in both modes,
+queue-drain versus final execution, stopped-worker wake and one drain wake per
+burst. The full normal native build, 179 cases / 2,239,932 assertions and
+packaging passed. Six maintained core patches still reproduce 132 files.
+
+Candidate eboot:
+`766fd504fbde289993e4ade75b158527eafdc372af34523eee20203e2fd2c30b`.
+Matched ELF:
+`77d73c97643ba0a7ec099051aa15421e00bb5932a437c95a528367ebd544480b`.
+A bounded on/off/on comparison is queued under the shared console lease,
+verifying the native executable and single-byte mode atomic before any write.
+Console validation and any performance effect remain pending. This is not an
+established step toward >40 FPS until measured.
+
+Memory-budget source review found that native generation already expresses
+cache usage and budget in the shared-pool callback's domain. The separate
+payload's failed AvailableDirectMemorySize call must not be generalized to the
+app: its pre-OOM log reported a valid 32 MiB free block. A fixed budget figure
+alone therefore does not explain the OOM. No further memory-policy change is
+included in this candidate.
