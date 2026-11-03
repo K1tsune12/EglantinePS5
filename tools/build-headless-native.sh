@@ -84,6 +84,7 @@ if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
     python3 -B "$root/tools/check-vulkan-handoff.py"
     python3 -B "$root/tools/check-transient-images.py"
     python3 -B "$root/tools/check-native-allocator-header.py"
+    python3 -B "$root/tools/check-shader-module-cache.py"
     python3 -B "$root/tools/check-gpu-time-probe.py"
     python3 -B "$root/tools/check-fence-requirements.py"
 fi

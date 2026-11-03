@@ -366,9 +366,9 @@ matched ELF
 The linked call-target and native condition-storage gates passed. Direct
 comparison also verifies all 30 and 13 allocated code/data sections in the
 two adapted members remain byte-identical to the source archive. Console
-run `1793669394010210672` is active as fresh PID 704; Terra viewed a rendered
-autumn-themed title scene. Timing, pool snapshots and guarded idle-spin
-comparison are pending; no >40 FPS claim is established.
+run `1793669394010210672` launched as fresh PID 704; Terra viewed a rendered
+autumn-themed title scene. Its completed timing, pool snapshots and interrupted
+idle-spin comparison are recorded below; no >40 FPS claim is established.
 
 
 Clock-adapter console result and failed A/B/A completion
@@ -421,9 +421,71 @@ The matched heap backtraces identify 201 MiB in 4,864 allocations through
 vk_common_CreateShaderModule -> Device::CreateShaderModule -> BuildShader.
 This is retained shader-module SPIR-V, not a sampled CPU hotspot. Source review
 shows completed graphics pipelines retain shared modules and the shader-reuse
-cache also owns them; compute pipelines retain their module. A next candidate
-can investigate releasing completed pipeline module references and bounding the
+cache also owns them; compute pipelines retain their module. The next candidate
+investigates releasing completed pipeline module references and bounding the
 reuse cache while preserving asynchronous compiler ownership and shader reuse.
-No memory-lifetime change has been implemented or measured yet. Duplicate RAM
+Its implementation and validation are recorded below. Duplicate RAM
 sharing is not being re-enabled: its existing source records an earlier FPS
 regression and GPU-fence waits.
+
+
+Shader-module lifetime and bounded reuse cache
+---------------------------------------------
+
+Maintained patch 0006 releases graphics and compute pipeline module references
+when their compilation task exits, including a caught driver failure. Graphics
+configuration selection happens before submitting the task: a worker can finish
+before QueueWork returns. The task retains its modules throughout compilation.
+Vulkan permits destroying a shader module after pipeline creation while the
+pipeline remains in use ([vkDestroyShaderModule reference](https://docs.vulkan.org/refpages/latest/refpages/source/vkDestroyShaderModule.html)).
+
+PS5 builds apply a 64 MiB budget to shader reuse, counting emitted SPIR-V copied
+by the driver plus each ReusableShaders object's fixed storage. Least recently
+used keys are evicted; the existing four-variant limit and environment checks
+remain. In-flight compilation references survive eviction. Retired entries are
+destroyed after unlocking the cache, avoiding a driver destruction call under
+its mutex. Dynamic descriptor/environment storage, allocator overhead, cache
+nodes and in-flight modules are outside this accounting: this is not a bound on
+total process or GPU memory. Other platforms retain an unlimited budget.
+
+The host fixture compiles the actual cache methods and graphics constructor
+scheduling tail against owned mock modules. AddressSanitizer/UndefinedBehaviorSanitizer
+and a separate ThreadSanitizer run passed variant checks, weighted eviction,
+LRU ordering, shrink/zero budgets, overflow, concurrent access, in-flight
+ownership, destructor re-entry, immediate/deferred scheduling and caught build
+failure cleanup. The native build gate runs the first fixture configuration.
+Native compilation covers the compute path; no mock compute-descriptor fixture
+is claimed. All six maintained patches reproduce 132 modified/new core files.
+
+The failure-chained native build, full checks and packaging passed, including
+179 cases / 2,239,932 assertions and the clock adapter's ABI/call-target gates.
+Candidate executable:
+`7050e96937413cf4f5f12bf0e71bf9eb7feb77a4b0fc18b1e068f370c4833e0d`.
+Matched ELF:
+`444549e7abae72d9a44c8836899ef13851ff5fedd5d83cd83cce2b81074fb179`.
+Driver archive remains `267eab50...`; normal production flags and 1x resolution
+are retained. Console run `1793672695814567304`, fresh PID 737, confirms the
+64 MiB startup policy and actual eviction logs. Terra inspected the initial and two later captures: rendered desert, city and
+road title scenes without obvious major corruption. Conservative full windows
+before the verified PID change total 1,463 frames / 116.189846 s:
+**12.591462 FPS**, worst frame 835.098 ms. The >40 FPS objective remains unmet.
+The camera/scene changes prevent a controlled gain claim.
+
+A retained pre-restart heap sample shows the driver shader-module allocation
+site at 44 MiB / 1,152 blocks, versus 201 MiB / 4,864 in the earlier run. The
+matched ELF resolves its driver CreateShaderModule, Device::CreateShaderModule
+and BuildShader addresses. This is evidence of lower sampled retained module
+storage, not a controlled whole-process memory comparison. The successful
+baseline global-pool enumeration reconstructs 940.27 MiB free and an 872 MiB
+largest gap; AvailableDirectMemorySize again failed and is excluded.
+
+The longer observation did not complete. A buffer allocation failed with
+VK_ERROR_OUT_OF_DEVICE_MEMORY, staging recovery freed 67 buffers / 1 MiB, and
+another allocation failed. The GPU thread terminated and the crash handler
+restarted PID 737 as PID 739. The boot guard stopped the experiment; final
+heap/stderr/eden logs belong to the restarted launcher and are excluded. Local
+pre-restart tails, first-observed frame counters and klog establish the partial
+result. No final pool snapshot, stat sample or completed dump-absence check is
+claimed. Original package files, metadata and controls were restored and hash
+verified, with idle confirmed before releasing the lease. Memory exhaustion
+remains unresolved; this patch does not establish sustained stability.
