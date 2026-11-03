@@ -119,6 +119,20 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
 
 void Frame(std::uint64_t frame, std::uint64_t ns) {
     if (frame % 10 == 0) {
+#ifdef EDEN_MKW_DIAGNOSTICS
+        // The expensive read-only kernel enumeration never overlaps an armed trace.
+        const auto* active_capture = capture.load(std::memory_order_acquire);
+        if (!pending_nonce && (!active_capture || active_capture->phase.load() == Capture::Done)) {
+            const char* pool_path = "/data/homebrew/PPSA98515/mkw-direct-pool-probe.txt";
+            if (FILE* request = std::fopen(pool_path, "r")) {
+                unsigned long long nonce{};
+                const bool valid = std::fscanf(request, "%llu", &nonce) == 1 && nonce;
+                std::fclose(request);
+                std::remove(pool_path);
+                if (valid) ::Eden::Performance::ReportDirectPool(nonce);
+            }
+        }
+#endif
         const char* snapshot_path = "/data/homebrew/PPSA98515/mkw-command-snapshot-mode.txt";
         if (FILE* mode = std::fopen(snapshot_path, "r")) {
             unsigned value{};

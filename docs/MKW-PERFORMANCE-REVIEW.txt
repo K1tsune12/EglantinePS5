@@ -534,3 +534,76 @@ allocation. The exercised run already selected ASTC-to-BC3 recompression on its
 actual late allocation sizes still need measurement before relaxing collection;
 fragmentation cannot be equated to total exhaustion or ignored outright. No
 memory-pressure policy was changed in this experiment.
+
+Read-only direct-pool and VMA allocation probes
+The diagnostic build now accepts an explicit one-shot pool probe outside armed
+ordered-read traces. It enumerates allocated physical extents, independently
+verifies every interior gap and tail with the free-block API, compares two
+bounded scans, and checks that the largest free block agrees before/after.
+Incomplete, unstable, malformed or capped observations report unknown rather
+than zero free bytes. Each scan is capped at 8,192 regions and 50 ms. These are
+non-atomic enumeration estimates, not an atomic kernel snapshot or a policy input.
+
+Opt-in VMA callbacks count successful device-memory block allocations/frees,
+live/peak bytes, size buckets and largest allocations by memory type. They do
+no allocation or I/O themselves. Failed requests, non-VMA driver allocations
+and CPU heaps are outside this view. Individual atomic counters are not a
+transaction with concurrent allocation activity. Allocation policy, collection
+thresholds and driver code are unchanged; normal builds leave callbacks off.
+
+The ASan/UBSan fixture covers independent gap/tail verification, hidden extents,
+incomplete/unstable/capped/malformed observations, true empty/full pools,
+histogram bounds, maxima, anomalous frees and 80,000 concurrent allocation/free
+lifetimes. An initial histogram-label mismatch failed this fixture; that build
+was stopped before packaging. The corrected fixture and final diagnostic native
+compile/link/package passed. Full release source checks were explicitly opted
+out; the previously recorded instrumentation check remains a merge blocker.
+
+Candidate eboot SHA256:
+df7dbe5cb11890dbd2f7dbaf28220433714d332edb7b3dc7a0cd153193b70018
+Matched ELF SHA256:
+789d15a344629082740319e44c1ffbc4916fcd8341de4026f27e8dd041da2fa1
+Core, four maintained patches and isolated RADV archive were unchanged.
+
+Run 1793671159620012526, fresh PID 726, produced five complete, stable,
+consistent observations. All gaps were independently verified; no cap, malformed
+extent, invalid VMA type or accounting anomaly was recorded. Each observation
+took 1.40-1.83 ms and enumerated 374-463 regions. MiB values:
+  Stage          Total free   Largest block   VMA live
+  Title            1499.80          686.00    3177.50
+  Free Roam        1202.86          656.38    3239.53
+  Phase 0          1165.83          656.38    3239.53
+  Phase 1          1142.52          654.38    3236.03
+  Phase 2          1149.17          654.38    3236.28
+The guest reserve held its 512 MiB target. Cache memory-short stayed true.
+Thus fragmentation contributes to the largest-block pressure signal even with
+more than 1 GiB total free. Late successful VMA allocations were small: in the
+final interval types 0/2/3 had no new block and type 5 peaked at 256 KiB.
+This does not establish that future large allocations are unnecessary or justify
+lowering the guard justified by the earlier 486 MiB allocation.
+
+Direct mapped mode remained 2; snapshots, semaphore bypass, producer waits,
+copy batching and selective notifications remained off. Three complete ten-frame
+stationary Free Roam windows pooled to 12.6443 FPS and 282.633 ordered reads/frame.
+There were 32 reads over 5 ms among 8,479 reads. Read-call median/p95/max were
+0.024858/0.044423/38.596050 ms. Per-frame accumulated CPU times were 47.6440 ms
+inside read calls, 42.3976 ms in the frontend queue, 0.5020 ms in the backend
+queue and 0.3307 ms in GPU wait APIs. These overlapping CPU durations are not a
+partition of wall time. Per frame: GPU staging copied 1,022,951.5 bytes; CPU
+buffer copies totaled 1,067,751.5 bytes, including 44,800 direct mapped bytes.
+No command-snapshot bytes or mapped validation failures were reported. This is
+an observational run, not an A/B comparison or an FPS improvement claim.
+
+GPT-6.1 Terra inspected title/menu/Free Roam and all three observation captures:
+the stationary kart and landmarks were consistent, with plausible geometry,
+textures, lighting and HUD, and no obvious corruption. Three separate bounded
+99 Hz ps5-perf recordings succeeded (916/946/947 samples); they ran outside the
+ordered-read windows and are retained privately with matched symbols. Original
+console executable, metadata, settings and owned input were restored and verified.
+This bounded test does not establish sustained stability or movement correctness.
+
+Startup logs also identify eager saved-pipeline construction: this run built
+3,115 cached pipelines before gameplay, taking 4,150 ms. Source inspection
+confirms LoadDiskResources queues all saved pipeline entries and waits for them.
+Its retained-memory contribution and a read-only on-demand comparison remain
+unmeasured; no pipeline-preload behavior change is included here.

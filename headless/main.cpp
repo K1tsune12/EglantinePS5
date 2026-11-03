@@ -519,6 +519,7 @@ int main(int argc, char** argv) {
         setenv("EDEN_PS5_TRANSIENT_POOLS", "1", 1);
         Eden::DevVulkan::gpu_time = true;
         Eden::DevVulkan::vma_block_mib = 16;
+        Eden::DevVulkan::allocation_probe = true;
         // Enable bounded readback probes for explicit diagnostic builds.
         setenv("EDEN_NX2_READBACK_DIAGNOSTICS", "1", 1);
         unsetenv("EDEN_NX2_PARTIAL_TEXTURE_READBACK");

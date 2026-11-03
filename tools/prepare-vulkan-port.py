@@ -687,10 +687,24 @@ adapt('src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp', 'vulkan_stagi
 adapt('src/video_core/vulkan_common/vulkan_device.cpp', 'vulkan_device.cpp', [
     ('            .preferredLargeHeapBlockSize = 64u * 1024u * 1024u,',
      '            .preferredLargeHeapBlockSize = VkDeviceSize{::Eden::DevVulkan::vma_block_mib} << 20,'),
+    ('    const VmaAllocatorCreateInfo allocator_info{',
+     '    static const VmaDeviceMemoryCallbacks eden_allocation_callbacks{\n'
+     '        .pfnAllocate = [](VmaAllocator, uint32_t type, VkDeviceMemory, VkDeviceSize size, void*) {\n'
+     '            if (eden_vma_device_memory_event) eden_vma_device_memory_event(type, size, 1);\n'
+     '        },\n'
+     '        .pfnFree = [](VmaAllocator, uint32_t type, VkDeviceMemory, VkDeviceSize size, void*) {\n'
+     '            if (eden_vma_device_memory_event) eden_vma_device_memory_event(type, size, 0);\n'
+     '        },\n'
+     '        .pUserData = nullptr,\n'
+     '    };\n'
+     '    const VmaAllocatorCreateInfo allocator_info{'),
+    ('            .pDeviceMemoryCallbacks = nullptr,',
+     '            .pDeviceMemoryCallbacks = ::Eden::DevVulkan::allocation_probe ? &eden_allocation_callbacks : nullptr,'),
     ('    vk::Check(vmaCreateAllocator(&allocator_info, &allocator));',
      '    std::printf("EDEN_VMA_BLOCK_MIB value=%u\\n", ::Eden::DevVulkan::vma_block_mib);\n'
      '    vk::Check(vmaCreateAllocator(&allocator_info, &allocator));'),
-    ('#include <algorithm>', '#include <algorithm>\n#include <cstdio>\n#include "dev_vulkan.h"\n#include "performance.h"'),
+    ('#include <algorithm>', '#include <algorithm>\n#include <cstdio>\n#include "dev_vulkan.h"\n#include "performance.h"\n'
+     'extern "C" void eden_vma_device_memory_event(unsigned, unsigned long long, int) __attribute__((weak));\n'),
     # "Memory in use" for the texture and buffer caches: on the console, the budget less what is
     # left of the pool the CPU shares with the GPU (performance.h, graphics_memory_free).
     ('u64 Device::GetDeviceMemoryUsage() const {\n',
