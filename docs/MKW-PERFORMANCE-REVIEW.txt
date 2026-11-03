@@ -15,9 +15,11 @@ and Pokopia fixes. No core fork switch or driver binary is included.
 
 Latest build status: the combined ten-patch fence-integrity and port loading-owner
 candidate passes full normal and diagnostic native checks/build/link/package,
-with 179 core cases / 2,239,932 assertions each. Its console test is queued.
-The earlier eight-patch console comparison failed before measurement; see the
-attributed first-presentation crash below. No new FPS result is available.
+with 179 core cases / 2,239,932 assertions each. The diagnostic console run
+rendered the title and main menu, then failed on a 31,195,136-byte device-local
+buffer allocation before Free Roam. No new FPS result is available. The earlier
+eight-patch attempt failed during first presentation; both failures are recorded
+below. The combined normal artifact remains untested on console.
 
 Earlier build sequence: the six-patch normal and MKW diagnostic configurations
 passed all required native checks/build/link/package without
@@ -1295,7 +1297,7 @@ no restoration errors. Game settings were only read. Broad rendering, movement
 correctness, sustained memory stability and the 40/60 FPS targets remain
 unqualified. Private archives/captures and profiles are excluded from the PR.
 
-Compute store-only frontier extension (host-verified, console comparison queued)
+Compute store-only frontier extension (host verified; console attempts below)
 Patch 0008 extends the opt-in command-fetch producer frontier to the compute
 engine's existing native_plain_methods table. CallMethod already returns after
 storing those native and legacy register values; the constructor's immutable
@@ -1322,10 +1324,9 @@ link and package with source checks enabled, each with 179 core cases /
   Normal eboot:     0d8c2a1aebeecefb629a513268afd20571ade7f36ccb719df23ec81b6c0df3de
   Normal ELF:       90ae3ca78a084dd673468c553886d1530cd3b178a9d78baa693ba8175dcf8b56
 The driver archive remains fdd18c8d492e9b7abf4324bfeacd4fb5b4134059f8c72ef7eb801b66c9c54e98.
-The diagnostic comparison is queued behind another live console task; the
-normal variant has not been console-tested. It will compare complete per-frame
-ordered-read/copy/fetch streams, unarmed guest-frame batches and kernel thread
-counters. No sampling-session reset or ownership override is attempted.
+The subsequent frozen eight-patch diagnostic attempt failed before measurement,
+as recorded below. Its normal variant has not been console-tested. No completed
+per-frame read/copy/fetch comparison or profile exists for this extension.
 
 Backend idle-spin investigation (historical profile, new candidate untested)
 The separate three-second PID 797 profile has 204 GPUBack leaf samples, of
@@ -1363,13 +1364,10 @@ assertions each. Nine patches reproduce 143 core files. The driver is unchanged.
   Normal eboot:     b9381138d8ef4348e17d01f7b37930b279f150f0c7c512ed220f1f7c11f75209
   Normal ELF:       c45906027d2dc251636a2b938ca27ff5dd247164b6b347784d36a8dde96c4d63
 
-Neither nine-patch artifact has been console-tested. The earlier frozen
-eight-patch compute-frontier runner remains queued behind a confirmed live
-console test; it will not use this spin-budget change. Its harness now attempts
-a matched-ELF three-second profile only after all comparison windows; it never
-resets the shared sampler. The spin candidate is prepared separately and has
-not been queued. It will need its own same-scene read/copy/fetch and CPU-counter
-comparison before any default change is justified.
+Neither nine-patch artifact was deployed. The later combined diagnostic artifact
+contains this hook but kept the original 8,192-iteration budget. No idle-spin A/B
+comparison was completed. A same-scene read/copy/fetch and CPU-counter comparison
+is required before a default change is justified; the normal default is retained.
 
 Pending-fence CPU-write integrity correction (host verified)
 A source audit of Zortos 5bef7354b464a38527864756814cc6e0f0fc6567 exposed
@@ -1447,8 +1445,38 @@ including both new fixtures and all 179 core cases / 2,239,932 assertions each.
   Normal eboot:     e1099c69c6f1b550db686e3f38355f90d03a4357254e5e1cbfd2c0baef5a3d1b
   Normal ELF:       0561f9845e2b54570f133ddd264b5bf012587811d499e6225a78746986603c4e
 The driver archive remains fdd18c8d492e9b7abf4324bfeacd4fb5b4134059f8c72ef7eb801b66c9c54e98.
-The corrected diagnostic run is queued behind another live console test. It
-keeps the original 8,192 idle-spin budget and will compare frontier OFF/ON only
-after reviewed, settled Free Roam. The nine-patch idle-spin binary was never
-deployed. Neither combined artifact has a console result yet; no FPS, rendering
-or sustained-stability gain is claimed.
+The corrected diagnostic run completed with the failure recorded below. It kept
+the original 8,192 idle-spin budget and did not reach its Free Roam comparison
+gate. The combined normal artifact has not been console-tested. No FPS or
+sustained-stability gain is claimed.
+
+Combined ten-patch console attempt: title/menu, then device-local allocation failure
+Run 1793698904016262630 deployed the exact diagnostic 04b1fe0c artifact above
+(matched ELF 364af8a6, PID 830). First presentation succeeded. GPT-6.1 Terra
+reviewed the title and subsequent main-menu captures, finding plausible city
+geometry, lighting and HUD. After L+R reached the main menu, the process
+restarted before the queued Plus input or Free Roam approval. This is limited
+one-boot startup/rendering evidence, not proof the earlier race is fully resolved.
+
+Live stderr records MKW_BUFFER_FAILURE bytes=31195136 usage=0 result=-2,
+largest_free=18546688, followed by VK_ERROR_OUT_OF_DEVICE_MEMORY. Usage zero
+is DeviceLocal: this was an ordinary buffer request, not input staging. The
+request was about 29.75 MiB while the largest free block was about 17.69 MiB.
+The reported direct_total=12817793024 is total pool capacity, not total free
+memory; aggregate free at failure is unknown. Exhaustion versus fragmentation
+is not resolved by the largest-block measurement alone.
+
+The attributed crash-20261103-064649 report records intentional OOM termination
+on GPUBack 270 seconds after launch, with matching executable code size.
+Matched-symbol stack candidates include BufferCache::CreateBuffer,
+UpdateVertexBuffer, UpdateVertexBuffers and RasterizerVulkan::Draw, supporting
+an ordinary vertex-buffer allocation path. These are scanned return addresses,
+not a complete unwound stack. No new oversized-index provenance was emitted.
+
+The run stopped on its first restart. It collected no approved Free Roam,
+ordered-read/fetch trace phases, qualified FPS comparison or sampled profile.
+Executable, package metadata, development controls and game configuration were
+restored and verified; both pipeline-cache files match their original bytes.
+Private captures, crash archives and control files remain excluded from the PR.
+This latest failure remains unresolved; sustained memory stability and the
+40/60 FPS targets remain unmet.
