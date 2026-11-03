@@ -85,6 +85,7 @@ if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
     python3 -B "$root/tools/check-submitted-commands.py"
     python3 -B "$root/tools/check-memory-probes.py"
     python3 -B "$root/tools/check-pipeline-preload.py"
+    python3 -B "$root/tools/check-shader-module-cache.py"
 fi
 # Source checks of the release configuration (development builds opt out: EDEN_SKIP_SOURCE_CHECKS=1).
 [[ ${EDEN_SKIP_SOURCE_CHECKS:-0} == 1 ]] && exit 0

@@ -3,17 +3,20 @@ Mario Kart World PS5 performance review — 2026-11-03
 Scope
 This draft preserves the accumulated investigation, including experimental
 instrumentation, as requested. The core remains Zortos 3140648a668aaebf87bae2dea17512fdca125ba0.
-Maintained patch 0004 is incremental over the existing three patches. The
+Maintained patch 0004 is incremental over the existing three patches; patch
+0005 bounds shader-module retention after pipeline compilation. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
 Current build status: normal and MKW diagnostic configurations pass all required
 native build checks without EDEN_SKIP_SOURCE_CHECKS. The earlier release CPU
-instrumentation failure recorded below is resolved. The latest diagnostic
-artifact was console-tested through a Crown City travel attempt, which failed
-with a staging allocation error before Free Roam. The final normal artifact has
-not been console-tested. Sustained memory stability and the 40 FPS goal remain
-unproven. The final follow-up below records these failures and exact artifacts.
+instrumentation failure recorded below is resolved. Recent diagnostic attempts
+found staging failures both during Crown City travel and before opening the
+world map. The latest module-budget candidate reached the map, where a private
+navigation-runner bug interrupted the test. A corrected retry is queued. The
+final normal artifact has not been console-tested. Sustained Free Roam memory
+stability and the 40 FPS goal remain unproven. The final follow-up below records
+these failures, scope and exact artifacts.
 
 The accumulated changes cover task/mesh shader handling, GPU mapping and
 readback tracking, bounded texture uploads and ASTC decoding, staging
@@ -833,3 +836,87 @@ collected system logs. Neither attempt supplies a valid Free Roam wait window,
 an FPS improvement, movement validation or sustained stability qualification.
 The final normal configuration remains untested on console. The PR remains a
 research draft with experimental alternatives disabled by default.
+
+Follow-up: failure caller attribution and bounded shader-module retention
+Failure-only PS5 staging hooks now retain the immediate caller, logical request,
+usage, deferred flag and Vulkan result. Texture upload failures also identify
+their caller. The frontend emits the log only in MKW diagnostic builds; normal
+builds use a no-op bridge. Exception propagation and allocation/synchronization
+policy are unchanged. Only return address zero is read; no stack walk is added.
+An initial candidate omitted these hooks because the core target did not define
+EDEN_MKW_DIAGNOSTICS. Artifact inspection caught their absence, and its queued
+test was cancelled before deployment. The corrected bridge uses PS5_NATIVE in
+the core and the diagnostic guard in the frontend. The emitted marker was
+verified before the final candidate's deployment.
+
+Run 1793680437774766681, PID 765, reached title/main menu and then failed before
+the world map opened. The archived crash-specific stderr, heap and Eden logs
+survived restart and are authoritative; generic post-restart logs are excluded.
+The report's code size matches the archived ELF, and the captured executable
+mapping starts at 0x400000 while ELF LOAD vaddr starts at zero. The hook reports:
+  MKW_BUFFER_FAILURE bytes=2097152 usage=0 result=-2
+    direct_total=12817793024 largest_free=2080768 query_status=0
+  EDEN_STAGING_OOM asked=1398128 made=2097152 released=0 buffers (0 MiB)
+  MKW_STAGING_SOURCE bytes=1398128 usage=0 deferred=0 result=-2
+    caller=1a4415c texture_upload=0
+Subtracting the verified load bias resolves the caller to 0x164415c in
+TextureCacheRuntime::TranscodeAstcToBcn. This is its device-local BCn output
+buffer, not the earlier 48 MiB input-staging request. The persistent transcode
+log identifies a 1024x1024, 11-level, single-layer texture requesting 1,398,128
+output bytes. The largest block was 16 KiB smaller than the rounded 2 MiB
+buffer. Pool capacity is not free memory; total free bytes remain unknown.
+This evidence rejects whole-image staging size as the sole allocation problem.
+No upload-chunking or driver modification is added on that hypothesis.
+
+Five maintained patches now reproduce 137 touched core files. New patch 0005
+adapts the bounded module-lifetime work from the local driver worktree without
+importing its driver archive or driver selection. Compute/graphics pipelines
+release their input modules when compilation completes. Graphics configuration
+selection happens before queuing the build, avoiding a race with immediate
+completion. The PS5 shader reuse cache has a 64 MiB LRU budget counting SPIR-V
+bytes copied by the driver plus fixed entry storage. Dynamic metadata and
+allocator overhead are not included. Compilation workers retain independent
+shared ownership while eviction removes only the reuse cache's reference;
+module destruction occurs outside the cache lock. Compiled pipelines remain.
+
+The fixture compiles the actual cache methods and graphics constructor's build
+scheduling tail. ASan/UBSan and ThreadSanitizer pass budget/LRU, variant limits,
+overflow, concurrent access, eviction with live compilation ownership, destructor
+reentry, immediate/deferred build completion and failure cleanup. Both normal
+and diagnostic native configurations completed all required checks/link/package
+with EDEN_SKIP_SOURCE_CHECKS=0; each passed 179 cases / 2,239,932 assertions.
+
+Caller-attribution candidate:
+  eboot 70e88f24c83fc43380a0bb0af098f179cec6094d03f4ff6a382838ce3835ae7d
+  ELF   9b02c1d9ed7d5992ccea7fc742c829141284db09232fc0b537f381bc8ff5052a
+Module-budget diagnostic candidate:
+  eboot cb73b7bf2bdfbc12e64e9526095e849d6d04129756c3b8aafeb6888c4bad6c25
+  ELF   1bb748a69302220768bbc671b30aaad083b14545f462341e68f459c8055352f6
+Module-budget normal candidate (not console-tested):
+  eboot 8386366de9e317c788f1a555c9d297457994e55e65ddfa27852eca514fa18c3b
+  ELF   4c8f36b356ea3abf9274b048cb5cda8cd0c7ba4cdd06e99d2b63435d88f076e0
+Core patch 0004 SHA256:
+  1fb54188361658c2796df5350827603b1aba65bb22c50fae936fd091d8c06876
+Core patch 0005 SHA256:
+  e37ebff508f29d12b30c9da21058cc7100442cc3dfc9c32ab740684ae46b55ae
+The Zortos gitlink and isolated RADV archive remain unchanged.
+
+Run 1793681373209640529, PID 775, exercised the module budget on console.
+Startup logs explicitly report 63 MiB / 64 MiB counted storage and at least
+2,072 evictions. GPT-6.1 Terra reviewed a plausible highway title/main menu and
+world map. Player 1 began in a different region from the earlier Crown City
+attempt, so the same stick movement selected unnamed terrain and no travel
+dialog appeared. A navigation-runner variable shadowing bug then prevented
+further commands. The experiment was stopped deliberately on the map, with no
+emulator crash, Free Roam approval or ordered-read measurement. Its final map
+frame counter is not gameplay FPS and cannot satisfy the Free Roam objective.
+Different scenes and elapsed streaming prohibit a controlled memory/FPS claim.
+
+Executable, metadata, settings and owned input/controls were restored and
+verified after both runs, and both persisted pipeline cache files retained their
+before/after hashes within each run. After the first module test was terminal
+and restored, the private runner's capture-label variable was corrected. A
+fixture executing the actual navigation gate passes repeated input sequences
+and rejects the old shadowing implementation. A retry with the same checked
+artifact is queued; it has no result yet. The normal build, sustained movement,
+Free Roam stability and the above-40-FPS objective remain unqualified.
