@@ -1146,3 +1146,34 @@ Candidate diagnostic eboot / matched ELF:
 Candidate normal eboot / matched ELF:
   dedc01bab020132edaf2b055998eea3ef6e4ece6337813d928a5f2a104f32699
   cd32956d17768c6236d7a990dd6b0a304fcbd12e620eed99c92bb141d5ec1789
+
+Normal-input build: malformed index failure before measurement
+The earlier five-patch b8ccef29 input-control variant was tested next (PID 806,
+local evidence 1793689546186042841). Its first attempt stopped before launch
+because the private FTP helper rejected the server's successful 226 deletion
+response. Restoration verified. The corrected helper accepts that response
+while still rejecting temporary FTP failures; the retry launched successfully.
+
+Terra confirmed the library's MarioKartWorld row before selection, then the
+title and main menu. The Free Roam shortcut reached a rear-kart desert-road
+scene, but the HUD had not settled in the sampled image. Before visual approval
+or a stationary measurement, the application restarted from PID 806 to 807.
+Settings remained 1x/Bilinear/1080p/60Hz, Fast GPU off and reactive flushing on;
+the library displayed the saved Handheld mode. This executable has neither the
+heavy MKW diagnostics nor the new command-fetch frontier experiment. Normal
+pipeline/cache/memory defaults and command snapshots off were retained.
+
+The preserved pre-restart stderr tail reports first_index=0x3d280000 and
+count=0x3e8d0000, element size 2, end address zero. UpdateIndexBuffer selected
+3,959,750,656 bytes; the merge produced a 3,959,816,192-byte buffer request across
+93 overlaps. CreateBuffer then reported VkResult=-2 and termination with
+VK_ERROR_OUT_OF_DEVICE_MEMORY. Failure-time total free/largest block are not
+established by the earlier periodic memory sample. The post-restart generic
+logs belong to the launcher and are not attributed to the failed game.
+
+No completed Free Roam FPS interval, movement check or CPU profile resulted.
+Command lifetime/parsing or producer corruption remains unproven; the large
+index request is not treated as legitimate game loading or suppressed by
+clamping/skipping a draw. Exact package/control restoration and pipeline-cache
+byte preservation verified. The new six-patch frontier candidate is a separate
+queued experiment; it is not claimed to fix this failure.
