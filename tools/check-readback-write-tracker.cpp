@@ -8,7 +8,15 @@ int main() {
     assert(!disabled.Register(1, 1024, false));
     Tracker registry{true};
     assert(!registry.Register(1, 1024, true));
-    assert(!registry.Register(1, 512*1024+1, false));
+    assert(!registry.Register(1, VideoCommon::MappedReadbackPolicy::MaxBuffer+1, false));
+    {
+        Tracker large{true};
+        auto state=large.Register(1,11468800,false);assert(state);
+        assert(!state->Lookup(10*1024*1024,4096));
+        large.TransferWrite(1,10*1024*1024,4096,71,false);
+        assert(state->Lookup(10*1024*1024,4096)->producer==71);
+        large.InvalidateAll();assert(!state->Lookup(10*1024*1024,4096));
+    }
     auto a = registry.Register(1, 1024, false);
     auto b = registry.Register(2, 1024, false);
     assert(a && b && a->identity != b->identity);

@@ -15,11 +15,16 @@ int main() {
     retained.reset();assert(p.Used()==0);
     assert(p.Prefer(0,Policy::MaxBuffer));
     std::vector<std::shared_ptr<Policy::Lease>> full;
-    for(unsigned i=0;i<32;++i){auto x=p.Reserve(0,Policy::MaxBuffer,false);assert(x);full.push_back(x);}
+    for(unsigned i=0;i<Policy::Budget/Policy::MaxBuffer;++i){auto x=p.Reserve(0,Policy::MaxBuffer,false);assert(x);full.push_back(x);}
     assert(p.Used()==Policy::Budget);assert(!p.Reserve(0,65536,false));
     std::thread release([leases=std::move(full)]()mutable{leases.clear();});release.join();assert(p.Used()==0);
     std::shared_ptr<Policy::Lease> surviving;
     {Policy temporary{true};assert(temporary.Prefer(0,65536));surviving=temporary.Reserve(0,65536,false);}
     surviving.reset(); // Budget state outlives its runtime owner.
+    Policy large{true};
+    constexpr unsigned hot_arena = 11468800;
+    assert(large.Prefer(0x10000000,hot_arena));
+    auto hot=large.Reserve(0x10000000,hot_arena,false);assert(hot&&large.Used()==hot_arena);
+    assert(!large.Reserve(0x10000000,hot_arena,true));hot.reset();assert(large.Used()==0);
     std::cout<<"PASS bounded allocation policy, containment, sparse/overflow rejection, shared lifetime and cross-thread release\n";
 }

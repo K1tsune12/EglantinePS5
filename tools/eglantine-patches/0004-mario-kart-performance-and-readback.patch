@@ -6174,7 +6174,7 @@ index 797913bda1..93108a310c 100644
          maxwell3d.RefreshParameters();
 diff --git a/src/video_core/mapped_readback_policy.h b/src/video_core/mapped_readback_policy.h
 new file mode 100644
-index 0000000000..9dfcd0e88f
+index 0000000000..7f0c2c8b64
 --- /dev/null
 +++ b/src/video_core/mapped_readback_policy.h
 @@ -0,0 +1,71 @@
@@ -6192,8 +6192,8 @@ index 0000000000..9dfcd0e88f
 +class MappedReadbackPolicy {
 +public:
 +    using Value = std::uint64_t;
-+    static constexpr Value MaxBuffer = 512 * 1024;
-+    static constexpr Value Budget = 16 * 1024 * 1024;
++    static constexpr Value MaxBuffer = 16 * 1024 * 1024;
++    static constexpr Value Budget = 64 * 1024 * 1024;
 +    struct Lease {
 +        Lease(std::shared_ptr<std::atomic<Value>> used_, Value bytes_)
 +            : used{std::move(used_)}, bytes{bytes_} {}
@@ -7211,10 +7211,10 @@ index 0000000000..1d837bb9ed
 +} // namespace VideoCommon
 diff --git a/src/video_core/readback_write_tracker.h b/src/video_core/readback_write_tracker.h
 new file mode 100644
-index 0000000000..ef7d7fc855
+index 0000000000..17be42d143
 --- /dev/null
 +++ b/src/video_core/readback_write_tracker.h
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +#pragma once
@@ -7223,6 +7223,7 @@ index 0000000000..ef7d7fc855
 +#include <unordered_map>
 +#include <vector>
 +#include "video_core/readback_range_tracker.h"
++#include "video_core/mapped_readback_policy.h"
 +
 +namespace VideoCommon {
 +// Diagnostic writer coverage only. Does not retain Vulkan allocations or authorize
@@ -7258,7 +7259,7 @@ index 0000000000..ef7d7fc855
 +        if (enabled) writes.reserve(MaxWrites);
 +    }
 +    std::shared_ptr<State> Register(Handle handle, Value size, bool sparse) {
-+        if (!enabled || sparse || size == 0 || size > 512 * 1024) return {};
++        if (!enabled || sparse || size == 0 || size > MappedReadbackPolicy::MaxBuffer) return {};
 +        Prune();
 +        if (states.size() >= 256 || next_identity == 0) return {};
 +        auto state = std::make_shared<State>(next_identity++, size, epoch);
@@ -7391,7 +7392,7 @@ index 07de25f18f..86ca391deb 100644
              .size = static_cast<u32>(sizeof(RescalingLayout)) - size_offset +
                      static_cast<u32>(sizeof(RenderAreaLayout)),
 diff --git a/src/video_core/renderer_vulkan/vk_buffer_cache.cpp b/src/video_core/renderer_vulkan/vk_buffer_cache.cpp
-index 29918b0ae8..e66fdfee15 100644
+index 29918b0ae8..3867418ba1 100644
 --- a/src/video_core/renderer_vulkan/vk_buffer_cache.cpp
 +++ b/src/video_core/renderer_vulkan/vk_buffer_cache.cpp
 @@ -15,6 +15,7 @@
@@ -7627,13 +7628,15 @@ index 29918b0ae8..e66fdfee15 100644
      for (auto it = slot_buffers.begin(); it != slot_buffers.end(); it++) {
          if (scheduler.IsFree(it->LastUsageTick())) {
              it->ResetUsageTracking();
-@@ -457,6 +624,57 @@ bool BufferCacheRuntime::BindSmallUniformReusing(
+@@ -457,6 +624,88 @@ bool BufferCacheRuntime::BindSmallUniformReusing(
      return true;
  }
  
 +extern "C" unsigned eden_mapped_readback_mode() __attribute__((weak));
 +extern "C" void eden_mapped_readback_result(u64, u64, u64) __attribute__((weak));
 +extern "C" void eden_mapped_readback_reject(unsigned) __attribute__((weak));
++extern "C" bool eden_readback_producer_wait_enabled() __attribute__((weak));
++extern "C" void eden_readback_producer_wait_result(u64, u64) __attribute__((weak));
 +
 +unsigned BufferCacheRuntime::MappedReadbackMode() const {
 +    return mapped_readback_failed || !eden_mapped_readback_mode ? 0 : eden_mapped_readback_mode();
@@ -7656,13 +7659,42 @@ index 29918b0ae8..e66fdfee15 100644
 +    if (buffer.IsSparseCompatible() || buffer.readback_mapping.empty() ||
 +        !buffer.readback_writes || copies.empty()) return reject(0);
 +    if (buffer.readback_writes->external_writer) return reject(1);
++    // Bounded snapshots let us recheck range identities after a producer wait.
++    // The cache owner holds the recording state; asynchronous mapping changes
++    // still invalidate the shared epoch and must reject this certificate.
++    std::array<VideoCommon::ReadbackRangeTracker::Ticket, 32> tickets;
++    if (copies.size() > tickets.size()) return reject(2);
++    u64 producer = 0;
++    size_t index = 0;
 +    for (const auto& copy : copies) {
 +        const auto ticket = buffer.readback_writes->Lookup(copy.src_offset, copy.size);
 +        if (!ticket) return reject(2);
-+        if (!scheduler.IsFree(ticket->producer)) return reject(3);
++        tickets[index++] = *ticket;
++        producer = (std::max)(producer, ticket->producer);
 +    }
-+    // No wait or submission here: all known producers are already complete. The
-+    // GPU/cache owner prevents recording a newer writer during immediate copying.
++    // A future tick cannot have been recorded by this scheduler lifetime.
++    if (producer > scheduler.CurrentTick()) return reject(2);
++    if (!scheduler.IsFree(producer)) {
++        if (!eden_readback_producer_wait_enabled || !eden_readback_producer_wait_enabled())
++            return reject(3);
++        if (eden_readback_producer_wait_result)
++            eden_readback_producer_wait_result(producer, scheduler.CurrentTick());
++        // Wait submits the current tick only when it contains this producer.
++        // Already-submitted producers do not flush unrelated later commands.
++        scheduler.Wait(producer);
++        if (!scheduler.IsFree(producer)) return reject(3);
++    }
++    if (buffer.readback_writes->external_writer) return reject(1);
++    index = 0;
++    for (const auto& copy : copies) {
++        const auto current = buffer.readback_writes->Lookup(copy.src_offset, copy.size);
++        const auto& saved = tickets[index++];
++        if (!current || current->allocation != saved.allocation || current->epoch != saved.epoch ||
++            current->version != saved.version || current->producer != saved.producer)
++            return reject(2);
++    }
++    // The GPU/cache owner prevents recording a newer writer while copying.
++    // Mapped allocations enable HOST_READ visibility before any producer is recorded.
 +    return buffer.readback_mapping;
 +}
 +
@@ -7685,7 +7717,7 @@ index 29918b0ae8..e66fdfee15 100644
  u64 BufferCacheRuntime::CurrentTick() {
      return scheduler.CurrentTick();
  }
-@@ -514,6 +732,8 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
+@@ -514,6 +763,8 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
                                               vk::CommandBuffer, vk::CommandBuffer upload_cmdbuf) {
              upload_cmdbuf.CopyBuffer(src_buffer, dst_buffer, vk_copies);
          });
@@ -7694,7 +7726,7 @@ index 29918b0ae8..e66fdfee15 100644
          return;
      }
  
-@@ -529,6 +749,9 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
+@@ -529,6 +780,9 @@ void BufferCacheRuntime::CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
                                     vk::PIPELINE_STAGE_GRAPHICS_COMPUTE, 0, WRITE_BARRIER);
          }
      });
@@ -7704,7 +7736,7 @@ index 29918b0ae8..e66fdfee15 100644
  }
  
  void BufferCacheRuntime::PreCopyBarrier() {
-@@ -584,6 +807,8 @@ void BufferCacheRuntime::ClearBuffer(VkBuffer dest_buffer, u32 offset, size_t si
+@@ -584,6 +838,8 @@ void BufferCacheRuntime::ClearBuffer(VkBuffer dest_buffer, u32 offset, size_t si
          cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                                 0, WRITE_BARRIER);
      });

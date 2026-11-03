@@ -16,6 +16,8 @@ static std::uint64_t pending_nonce{};
 static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
 static std::atomic<bool> download_batch_enabled{};
+static std::atomic<bool> producer_wait_enabled{};
+static std::atomic<std::uint64_t> producer_waits{}, producer_waits_older{};
 static std::atomic<std::uint64_t> download_copy_regions{}, download_copy_commands{};
 static std::atomic<bool> vulkan_handoff_enabled{};
 // Diagnostic43: exercise range-local mapping updates during initial loading.
@@ -113,6 +115,23 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
 
 void Frame(std::uint64_t frame, std::uint64_t ns) {
     if (frame % 10 == 0) {
+        const char* producer_path = "/data/homebrew/PPSA98515/mkw-producer-wait-mode.txt";
+        if (FILE* mode = std::fopen(producer_path, "r")) {
+            unsigned value{};
+            if (std::fscanf(mode, "%u", &value) == 1 && value <= 1) {
+                producer_wait_enabled.store(value != 0, std::memory_order_release);
+                std::printf("MKW_PRODUCER_WAIT_MODE frame=%llu mode=%u waits=%llu older=%llu\n",
+                    static_cast<unsigned long long>(frame), value,
+                    static_cast<unsigned long long>(producer_waits.load()),
+                    static_cast<unsigned long long>(producer_waits_older.load()));
+            }
+            std::fclose(mode);
+            std::remove(producer_path);
+        }
+        if (frame % 30 == 0) std::printf("MKW_PRODUCER_WAIT_STATS frame=%llu mode=%u waits=%llu older=%llu\n",
+            static_cast<unsigned long long>(frame), unsigned(producer_wait_enabled.load()),
+            static_cast<unsigned long long>(producer_waits.load()),
+            static_cast<unsigned long long>(producer_waits_older.load()));
         const char* copy_batch_path = "/data/homebrew/PPSA98515/mkw-copy-batch-mode.txt";
         if (FILE* mode = std::fopen(copy_batch_path, "r")) {
             unsigned value{};
@@ -333,6 +352,13 @@ extern "C" bool eden_vulkan_handoff_enabled() {
 
 extern "C" bool eden_download_copy_batch_enabled() {
     return Eden::OrderedReadTrace::download_batch_enabled.load(std::memory_order_acquire);
+}
+extern "C" bool eden_readback_producer_wait_enabled() {
+    return Eden::OrderedReadTrace::producer_wait_enabled.load(std::memory_order_acquire);
+}
+extern "C" void eden_readback_producer_wait_result(std::uint64_t producer, std::uint64_t current) {
+    Eden::OrderedReadTrace::producer_waits.fetch_add(1, std::memory_order_relaxed);
+    if (producer < current) Eden::OrderedReadTrace::producer_waits_older.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" void eden_download_copy_batch_result(std::uint64_t regions, std::uint64_t commands) {
     Eden::OrderedReadTrace::download_copy_regions.fetch_add(regions, std::memory_order_relaxed);
