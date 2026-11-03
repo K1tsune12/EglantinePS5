@@ -818,3 +818,46 @@ source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-780987f1b5d6`.
 The bounded Low/reactive-off/1x/framegen-off trial is queued under the shared
 console lease. Runtime rendering, FPS and stability for this artifact remain
 unverified. The >40 FPS objective remains unmet.
+
+
+Descriptor invalidation candidate (console validation queued)
+-----------------------------------------------------------
+
+The next candidate replaces full descriptor-read bitset clearing with per-word
+generation stamps. `Invalidate` advances a 64-bit generation; the next read of
+a word clears that word before interpreting its bits. Generation rollover
+clears all stamps before reusing generation one. Table refresh resizes both
+vectors and invalidates the generation. This adds one 64-bit stamp per 64
+descriptors (about 64 KiB at the table's minimum preallocation), trading a
+stamp check per read for constant-time normal invalidation.
+
+Native PS5 builds also omit the validation-only walk that poisons every cached
+image-view ID after deletion or scale invalidation, following the optimization
+reviewed in sibling `57cf423`. Both graphics and compute descriptor tables still
+invalidate, so the first lookup replaces the cached ID even when the guest
+TIC is unchanged. Other view-reference removal and validation remain intact.
+`EDEN_TEXTURE_CACHE_POISON_IDS=1` restores that walk on PS5; desktop builds keep
+the previous poisoning behavior.
+
+The actual descriptor table matched its frozen reference in **1,080,219
+comparisons** under AddressSanitizer/UndefinedBehaviorSanitizer, covering
+unchanged/new descriptors, bit-word boundaries, growth/shrink, GPU-address
+rebasing, repeated invalidation and forced generation rollover. A fixture
+extracting the actual `VisitImageView` method exercised graphics and compute
+lookups in two channels, deletion with stale per-index IDs, replacement with
+unchanged guest descriptors and null views. It passed with native poisoning
+off/on and with the unchanged desktop default. Mock memory and view allocation
+is used; these fixtures do not establish GPU rendering correctness.
+
+Full normal native checks, **179 cases / 2,239,932 assertions**, build and
+integration package passed. Eight maintained patches reproduce 134 core files.
+The candidate eboot is
+`88bc249bb8f00808dd83ad6f4b98afe1b88d9ef5ef50672b71cdc7236d73ca69`,
+matched ELF
+`81edb8cf46e49e393d44bba818f1fa36bec29a93debc491ab661c639ddb52122`,
+source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-b9de4ef6eb59`.
+This artifact includes the preceding ASTC scan change. Its bounded
+Low/reactive-off/1x/framegen-off console trial is separately queued under the
+shared lease, with original-file and preference restoration. Both this trial
+and the ASTC-only trial remain pending; no title FPS gain or runtime rendering
+claim is made for either artifact. The >40 FPS objective remains unmet.

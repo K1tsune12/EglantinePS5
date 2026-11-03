@@ -131,4 +131,5 @@ fi
 python3 -B tools/check-hud.py
 python3 -B tools/check-split-loading.py
 python3 -B tools/check-astc-opacity.py
+python3 -B tools/check-descriptor-invalidation.py
 python3 -B tools/check-game-frame-summary.py
