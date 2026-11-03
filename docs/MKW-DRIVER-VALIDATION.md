@@ -786,3 +786,35 @@ reproduce six patches / 132 files. All three per-PID dump files were absent.
 Original package files, metadata, controls and exact preference bytes were
 restored and verified (settings SHA256 0b0d73fc..., full hash above); idle was
 confirmed before lease release. No long-term stability claim is made.
+
+
+ASTC opacity scan candidate (console validation queued)
+------------------------------------------------------
+
+The computational fast path reviewed from sibling commit `57cf423` reads the
+single-partition block mode and endpoint mode directly. Reserved modes keep
+the current opaque-error result; void extents and multiple partitions use the
+existing parser. This implementation assembles bytes explicitly, avoiding a
+host-endian assumption. It does not change format selection or GPU ordering.
+Other changes from that sibling commit were not imported with this candidate.
+
+`tools/check-astc-opacity.py` extracts the actual parser and compares it with a
+frozen pre-optimization reference. All 131,072 combinations of the first 17
+header bits are checked with four randomized payloads each, followed by
+200,000 randomized inputs of lengths 0-64 (including partial trailing blocks):
+**724,288 comparisons passed** under AddressSanitizer/UndefinedBehaviorSanitizer.
+A synthetic complete scan of 100 MiB of opaque single-partition blocks took
+0.162899 s with the reference and 0.006924 s with the candidate in an unsanitized
+host `-O3` build (23.526x). This is a scanner microbenchmark, not title FPS or a
+native-console speedup measurement.
+
+Full normal native checks, **179 cases / 2,239,932 assertions**, the differential
+fixture, build and integration package passed. Seven maintained patches now
+reproduce 133 core files. The candidate eboot is
+`5e5180b52d2f4f7223c69155f78961617aab4468885d1ca45e8b7a10cce69621`,
+matched ELF
+`c8880ef1df66d251651b62f4aeab5603f711d23da35ef67e93ce21e01ad1e0d9`,
+source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-780987f1b5d6`.
+The bounded Low/reactive-off/1x/framegen-off trial is queued under the shared
+console lease. Runtime rendering, FPS and stability for this artifact remain
+unverified. The >40 FPS objective remains unmet.
