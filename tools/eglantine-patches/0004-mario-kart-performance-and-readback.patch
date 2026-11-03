@@ -571,6 +571,34 @@ index e4487c98da..bd29a9ee7a 100644
      gc.flags |= (1ULL << 40) | (1ULL << 41) | (1ULL << 42) | (1ULL << 43);
  
      // The Switch 2 layout keeps nine s16 interface versions at 0x70..0x80 (like nvgpu's
+diff --git a/src/core/hle/service/nvdrv/devices/nvhost_gpu.cpp b/src/core/hle/service/nvdrv/devices/nvhost_gpu.cpp
+index 7ab8c425d7..b050810877 100644
+--- a/src/core/hle/service/nvdrv/devices/nvhost_gpu.cpp
++++ b/src/core/hle/service/nvdrv/devices/nvhost_gpu.cpp
+@@ -24,6 +24,7 @@
+ #include "video_core/engines/puller.h"
+ #include "video_core/gpu.h"
+ #include "video_core/host1x/host1x.h"
++#include "video_core/memory_manager.h"
+ 
+ namespace Service::Nvidia::Devices {
+ namespace {
+@@ -460,6 +461,15 @@ NvResult nvhost_gpu::SubmitGPFIFOImpl(IoctlSubmitGpfifo& params, Tegra::CommandL
+                 entries.submit_hashes.push_back(Tegra::HashPushbufferWords(words));
+             }
+         }
++        // Bounded form of Zortos cce6d44af2's submitted-word copies. Execute-time
++        // selection still rejects GPU-written, dirty and resumed entries.
++        if (VideoCommon::CommandSnapshotsEnabled() && channel_state->memory_manager) {
++            entries.submitted_commands = VideoCommon::SubmittedCommands<Tegra::CommandHeader>::Capture(
++                std::span<const Tegra::CommandListHeader>{entries.command_lists.data(), entries.command_lists.size()},
++                [&](auto address, std::span<Tegra::CommandHeader> words) {
++                    channel_state->memory_manager->ReadBlockUnsafe(address, words.data(), words.size_bytes());
++                });
++        }
+     }
+ 
+     auto& flags = params.flags;
 diff --git a/src/core/hle/service/nvdrv/devices/nx2_gpu_command_scope.h b/src/core/hle/service/nvdrv/devices/nx2_gpu_command_scope.h
 new file mode 100644
 index 0000000000..8a8c8742b5
@@ -5682,7 +5710,7 @@ index e6856aaca3..2f359749aa 100644
  } // Anonymous namespace
  
 diff --git a/src/video_core/dma_pusher.cpp b/src/video_core/dma_pusher.cpp
-index 2e3bbc7668..2b50b5167c 100644
+index 2e3bbc7668..97eb813d3c 100644
 --- a/src/video_core/dma_pusher.cpp
 +++ b/src/video_core/dma_pusher.cpp
 @@ -1,3 +1,5 @@
@@ -5701,7 +5729,59 @@ index 2e3bbc7668..2b50b5167c 100644
  }
  
  u64 BeginSubmission(s32 fd, u32 ioctl, u32 variant, u64 session,
-@@ -579,11 +582,25 @@ void DmaPusher::RecordCapture(const char* phase, std::span<const CommandHeader>
+@@ -390,6 +393,14 @@ bool DmaPusher::Step() {
+     }
+ 
+     if (header.size > 0) {
++        const bool snapshot_enabled = VideoCommon::CommandSnapshotsEnabled();
++        const auto snapshot = snapshot_enabled && command_list.submitted_commands
++            ? command_list.submitted_commands->Entry(dma_pushbuffer_subindex, header.size)
++            : std::nullopt;
++        // Drain before consulting ever-written pages: a queued producer may perform
++        // their first write. Remember the result even when flushing clears dirty state.
++        bool gpu_written = snapshot && FlushGpuWrittenCommands(
++            dma_state.dma_get, size_t{header.size} * sizeof(u32));
+         if (subchannels[dma_state.subchannel] && dma_state.method_count) {
+             const auto engine = subchannel_type[dma_state.subchannel];
+             const bool kepler_payload = engine == Engines::EngineTypes::KeplerCompute && dma_state.method == ComputeInline && dma_state.non_incrementing;
+@@ -427,6 +438,7 @@ bool DmaPusher::Step() {
+                     if (memory_manager.IsMemoryDirty(address, bytes, VideoCommon::CacheType::BufferCache)) {
+                         memory_manager.FlushRegion(address, bytes, VideoCommon::CacheType::BufferCache);
+                         flushed_parameters = true;
++                        gpu_written = true; // The submitted parameter words are now stale.
+                         static std::atomic<u32> flush_logs{};
+                         if (flush_logs.fetch_add(1) < 20) {
+                             LOG_INFO(HW_GPU, "Macro parameters at {:#x} ({} words) were written by the GPU: flushed",
+@@ -488,14 +500,26 @@ bool DmaPusher::Step() {
+         // (the split only starts with unsafe reads; the settings can change mid-game).
+         const bool use_safe = !VideoCommon::GpuSplit::Get().Active() &&
+                               (Settings::IsDMALevelDefault() ? Settings::IsGPULevelHigh() : Settings::IsDMALevelSafe());
+-        if (use_safe) {
++        const bool safe_dirty = snapshot && use_safe && memory_manager.IsMemoryDirty(
++            dma_state.dma_get, size_t{header.size} * sizeof(u32));
++        const bool submitted = VideoCommon::CanUseSubmittedCommands(
++            command_resume_offset != 0, snapshot.has_value(), gpu_written, safe_dirty);
++        if (eden_command_snapshot_fetch) {
++            const unsigned reason = submitted ? 0 : !snapshot_enabled ? 1 : !snapshot ? 2 :
++                command_resume_offset != 0 ? 3 : gpu_written ? 4 : 5;
++            eden_command_snapshot_fetch(reason, size_t{header.size} * sizeof(u32));
++        }
++        if (submitted) {
++            RecordParsedEntry(header, *snapshot);
++            command_resume_offset += ProcessCommands(*snapshot, 0);
++        } else if (use_safe) {
+             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
+             const std::span<const CommandHeader> commands{headers.data(), headers.size()};
+             RecordParsedEntry(header, commands);
+             command_resume_offset +=
+                 ProcessCommands(commands.subspan(command_resume_offset), command_resume_offset);
+         } else {
+-            FlushGpuWrittenCommands(dma_state.dma_get, size_t{header.size} * sizeof(u32));
++            if (!snapshot) FlushGpuWrittenCommands(dma_state.dma_get, size_t{header.size} * sizeof(u32));
+             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::UnsafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
+             const std::span<const CommandHeader> commands{headers.data(), headers.size()};
+             RecordParsedEntry(header, commands);
+@@ -579,11 +603,25 @@ void DmaPusher::RecordCapture(const char* phase, std::span<const CommandHeader>
  }
  
  size_t DmaPusher::ProcessCommands(std::span<const CommandHeader> commands, size_t word_offset) {
@@ -5727,7 +5807,7 @@ index 2e3bbc7668..2b50b5167c 100644
  #ifdef ARCHITECTURE_x86_64
          if (trace_bind) {
              TraceBindPacket(*this, commands, index, word_offset);
-@@ -727,6 +744,13 @@ bool DmaPusher::WantsSegment() const {
+@@ -727,6 +765,13 @@ bool DmaPusher::WantsSegment() const {
  }
  
  void DmaPusher::CallMethod(u32 argument) {
@@ -5741,7 +5821,7 @@ index 2e3bbc7668..2b50b5167c 100644
      if (g_semaphore_watch != 0) [[unlikely]] {
          WatchArgument(dma_state.method, argument);
      }
-@@ -772,7 +796,9 @@ void DmaPusher::CallMethod(u32 argument) {
+@@ -772,7 +817,9 @@ void DmaPusher::CallMethod(u32 argument) {
              subchannel->method_sink.emplace_back(dma_state.method, argument);
          } else {
              VideoCommon::Nx2Profile::Scope method_scope{VideoCommon::Nx2Profile::Zone::Method};
@@ -5751,7 +5831,7 @@ index 2e3bbc7668..2b50b5167c 100644
              subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
  #ifdef ARCHITECTURE_x86_64
              if (dma_state.method == NativeBindMethod &&
-@@ -790,6 +816,13 @@ void DmaPusher::CallMethod(u32 argument) {
+@@ -790,6 +837,13 @@ void DmaPusher::CallMethod(u32 argument) {
  }
  
  void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
@@ -5765,7 +5845,7 @@ index 2e3bbc7668..2b50b5167c 100644
      if (g_semaphore_watch != 0) [[unlikely]] {
          for (u32 i = 0; i < num_methods; ++i) {
              WatchArgument(dma_state.method + (dma_state.non_incrementing ? 0 : i), base_start[i]);
-@@ -829,7 +862,9 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
+@@ -829,7 +883,9 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
              return;
          }
          VideoCommon::Nx2Profile::Scope method_scope{VideoCommon::Nx2Profile::Zone::Method};
@@ -5775,6 +5855,73 @@ index 2e3bbc7668..2b50b5167c 100644
          subchannel->current_dma_segment = dma_state.dma_get + dma_state.dma_word_offset;
  #ifdef ARCHITECTURE_x86_64
          if (dma_state.method == NativeBindMethod &&
+@@ -845,23 +901,34 @@ void DmaPusher::CallMultiMethod(const u32* base_start, u32 num_methods) {
+     }
+ }
+ 
+-void DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
++bool DmaPusher::FlushGpuWrittenCommands(GPUVAddr address, size_t size) {
+     // Title 1 runs small command lists its culling dispatches fill in each frame. Accurate GPU
+     // mode reads every command list through the caches (safe reads); here only the ones on pages
+     // the GPU has written are, or their draws run with an older frame's words (trees vanish).
+     if (!Tegra::g_nx2_ampere.load(std::memory_order_relaxed) || size == 0) {
+-        return;
++        return false;
+     }
++    bool written = false;
++    bool unknown = false;
+     Nx2SynchronizeGpuWrittenCommands(address, size,
+         [] {
+             if (auto& split = VideoCommon::GpuSplit::Get(); split.Active()) split.Drain();
+         },
+-        [&](GPUVAddr page) { return memory_manager.GpuToCpuAddress(page); },
++        [&](GPUVAddr page) {
++            const auto device = memory_manager.GpuToCpuAddress(page);
++            // The history bitmap covers 36-bit device addresses. Missing or
++            // unrepresented mappings cannot certify a submitted snapshot.
++            unknown |= !device || (*device >> Nx2WrittenPageBits) >=
++                g_nx2_gpu_written_pages.size() * 64;
++            return device;
++        },
+         [&] {
++            written = true;
+             if (memory_manager.IsMemoryDirty(address, size, VideoCommon::CacheType::BufferCache)) {
+                 memory_manager.FlushRegion(address, size, VideoCommon::CacheType::BufferCache);
+             }
+         });
++    return written || unknown;
+ }
+ 
+ void DmaPusher::ReportUnboundSubchannel() {
+diff --git a/src/video_core/dma_pusher.h b/src/video_core/dma_pusher.h
+index 4f5e1e68e7..bfc9c52e97 100644
+--- a/src/video_core/dma_pusher.h
++++ b/src/video_core/dma_pusher.h
+@@ -19,6 +19,7 @@
+ #include "common/scratch_buffer.h"
+ #include "video_core/engines/engine_interface.h"
+ #include "video_core/engines/puller.h"
++#include "video_core/submitted_commands.h"
+ 
+ namespace Core {
+ class System;
+@@ -117,6 +118,7 @@ struct CommandList final {
+     boost::container::small_vector<CommandHeader, 512> prefetch_command_list;
+     /// EDEN_NX2_PB_CHECK: hash of each entry's words when it was submitted.
+     std::vector<u64> submit_hashes;
++    std::shared_ptr<const VideoCommon::SubmittedCommands<CommandHeader>> submitted_commands;
+     u64 capture_submit_id{};
+     u64 capture_enqueue_id{};
+     const char* capture_origin{"untracked"};
+@@ -196,7 +198,7 @@ public:
+     void CheckSubmitHash(const CommandListHeader& header, u64 submit_hash);
+     void RecordParsedEntry(const CommandListHeader& header, std::span<const CommandHeader> commands);
+     /// Brings command list words the GPU wrote (still only in host buffers) to guest memory.
+-    void FlushGpuWrittenCommands(GPUVAddr address, size_t size);
++    bool FlushGpuWrittenCommands(GPUVAddr address, size_t size);
+ 
+ private:
+ 
 diff --git a/src/video_core/engines/fermi_2d.cpp b/src/video_core/engines/fermi_2d.cpp
 index 35b2c69801..a5a1a02fd9 100644
 --- a/src/video_core/engines/fermi_2d.cpp
@@ -9407,6 +9554,116 @@ index eafa778883..09a4491362 100644
              if (std::getenv("EDEN_NX2_SHADER_DUMP")) {
                  InitializeNativeCode(nullptr);
              }
+diff --git a/src/video_core/submitted_commands.h b/src/video_core/submitted_commands.h
+new file mode 100644
+index 0000000000..8965b9dd3e
+--- /dev/null
++++ b/src/video_core/submitted_commands.h
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++#pragma once
++
++#include <atomic>
++#include <cstddef>
++#include <cstdint>
++#include <memory>
++#include <new>
++#include <optional>
++#include <span>
++#include <vector>
++
++extern "C" bool eden_command_snapshot_enabled() __attribute__((weak));
++extern "C" void eden_command_snapshot_captured(std::uint64_t) __attribute__((weak));
++extern "C" void eden_command_snapshot_fetch(unsigned, std::uint64_t) __attribute__((weak));
++
++namespace VideoCommon {
++inline bool CommandSnapshotsEnabled() {
++    return eden_command_snapshot_enabled && eden_command_snapshot_enabled();
++}
++
++// Selection follows Zortos cce6d44af2, 6612817cb4 and fae3bc64. A flush must
++// disqualify a stale snapshot even after it cleared the cache's dirty state.
++constexpr bool CanUseSubmittedCommands(bool resumed, bool has_snapshot, bool gpu_written,
++                                       bool safe_read_dirty) {
++    return !resumed && has_snapshot && !gpu_written && !safe_read_dirty;
++}
++
++template <typename Word>
++class SubmittedCommands {
++public:
++    SubmittedCommands() = default;
++    SubmittedCommands(const SubmittedCommands&) = delete;
++    SubmittedCommands& operator=(const SubmittedCommands&) = delete;
++    static constexpr std::size_t MaxSnapshotBytes = 16 * 1024 * 1024;
++    static constexpr std::size_t BudgetBytes = 64 * 1024 * 1024;
++    static constexpr std::size_t MaxEntries = 65536;
++
++    template <typename Header, typename Read>
++    static std::shared_ptr<const SubmittedCommands> Capture(std::span<const Header> entries,
++                                                           Read&& read) {
++        if (entries.empty() || entries.size() > MaxEntries) return {};
++        const auto metadata_bytes = (entries.size() + 1) * sizeof(std::uint32_t);
++        const auto max_words = (MaxSnapshotBytes - metadata_bytes) / sizeof(Word);
++        std::size_t count{};
++        for (const auto& entry : entries) {
++            const auto words = static_cast<std::size_t>(entry.size);
++            if (words > max_words - count) return {};
++            count += words;
++        }
++        if (!count) return {};
++        const auto bytes = count * sizeof(Word) + metadata_bytes;
++        try {
++            auto snapshot = std::make_shared<SubmittedCommands>();
++            auto lease = std::make_shared<Lease>();
++            lease->used = Budget();
++            auto used = lease->used->load(std::memory_order_relaxed);
++            do {
++                if (used > BudgetBytes - bytes) return {};
++            } while (!lease->used->compare_exchange_weak(used, used + bytes,
++                                                        std::memory_order_acq_rel));
++            lease->bytes = bytes;
++            snapshot->lease = std::move(lease);
++            snapshot->words.resize(count);
++            snapshot->offsets.resize(entries.size() + 1);
++            std::size_t offset{};
++            for (std::size_t i = 0; i < entries.size(); ++i) {
++                snapshot->offsets[i] = static_cast<std::uint32_t>(offset);
++                const auto size = static_cast<std::size_t>(entries[i].size);
++                if (size) read(entries[i].addr, std::span<Word>{snapshot->words}.subspan(offset, size));
++                offset += size;
++            }
++            snapshot->offsets.back() = static_cast<std::uint32_t>(offset);
++            if (eden_command_snapshot_captured) eden_command_snapshot_captured(count * sizeof(Word));
++            return snapshot;
++        } catch (const std::bad_alloc&) {
++            return {}; // Existing live-read path; every reservation unwinds with its payload.
++        }
++    }
++
++    std::optional<std::span<const Word>> Entry(std::size_t index, std::size_t size) const {
++        if (offsets.empty() || index >= offsets.size() - 1) return {};
++        const auto first = offsets[index], last = offsets[index + 1];
++        if (first > last || last > words.size() || last - first != size) return {};
++        return std::span<const Word>{words}.subspan(first, size);
++    }
++    static std::size_t UsedBytes() { return Budget()->load(std::memory_order_acquire); }
++
++private:
++    struct Lease {
++        std::shared_ptr<std::atomic<std::size_t>> used;
++        std::size_t bytes{};
++        ~Lease() { if (bytes) used->fetch_sub(bytes, std::memory_order_acq_rel); }
++    };
++    static std::shared_ptr<std::atomic<std::size_t>> Budget() {
++        static auto used = std::make_shared<std::atomic<std::size_t>>(0);
++        return used;
++    }
++    // Copies of a CommandList share this immutable payload and its one reservation.
++    std::shared_ptr<Lease> lease;
++    std::vector<Word> words;
++    std::vector<std::uint32_t> offsets;
++};
++} // namespace VideoCommon
 diff --git a/src/video_core/texture_cache/image_base.h b/src/video_core/texture_cache/image_base.h
 index 9968bf796d..d64cb90b46 100644
 --- a/src/video_core/texture_cache/image_base.h

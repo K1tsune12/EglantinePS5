@@ -23,12 +23,13 @@ public:
         std::uint64_t allocation_id{}, candidate_producer_tick{}, write_version{}, candidate_producer_completed{};
     };
     static constexpr std::size_t CopyCapacity = std::min<std::size_t>(Capacity, 16384);
-    struct Boundary { std::uint64_t frame{}, ns{}, buffer_gpu_bytes{}, buffer_cpu_bytes{}, mapped_direct_bytes{}, mapped_checked_bytes{}, mapped_failures{}; };
+    struct Boundary { std::uint64_t frame{}, ns{}, buffer_gpu_bytes{}, buffer_cpu_bytes{}, mapped_direct_bytes{}, mapped_checked_bytes{}, mapped_failures{}, command_snapshot_bytes{}; };
     enum Phase : unsigned { Idle, Recording, Draining, Exporting, Done };
 
     void Start(std::uint64_t nonce_, std::uint64_t frame, std::uint64_t ns,
                unsigned frame_count, std::uint64_t gpu_bytes = 0, std::uint64_t cpu_bytes = 0, std::uint64_t direct = 0,
-               std::uint64_t checked = 0, std::uint64_t failures = 0) {
+               std::uint64_t checked = 0, std::uint64_t failures = 0,
+               std::uint64_t snapshot_bytes = 0) {
         nonce = nonce_;
         next.store(0);
         dropped.store(0);
@@ -37,7 +38,7 @@ public:
         inflight.store(0);
         frames = 1;
         limit = std::clamp<unsigned>(frame_count, 1, FrameCapacity - 1);
-        boundaries[0] = {frame, ns, gpu_bytes, cpu_bytes, direct, checked, failures};
+        boundaries[0] = {frame, ns, gpu_bytes, cpu_bytes, direct, checked, failures, snapshot_bytes};
         current_frame.store(frame + 1);
         phase.store(Recording, std::memory_order_release);
     }
@@ -86,11 +87,12 @@ public:
     }
     void Frame(std::uint64_t frame, std::uint64_t ns,
                std::uint64_t gpu_bytes = 0, std::uint64_t cpu_bytes = 0, std::uint64_t direct = 0,
-               std::uint64_t checked = 0, std::uint64_t failures = 0) {
+               std::uint64_t checked = 0, std::uint64_t failures = 0,
+               std::uint64_t snapshot_bytes = 0) {
         current_frame.store(frame + 1, std::memory_order_release);
         if (phase.load(std::memory_order_acquire) != Recording) return;
         if (frame <= boundaries[frames - 1].frame) return;
-        boundaries[frames++] = {frame, ns, gpu_bytes, cpu_bytes, direct, checked, failures};
+        boundaries[frames++] = {frame, ns, gpu_bytes, cpu_bytes, direct, checked, failures, snapshot_bytes};
         if (frames == limit + 1) phase.store(Draining, std::memory_order_release);
     }
     bool Ready() const {

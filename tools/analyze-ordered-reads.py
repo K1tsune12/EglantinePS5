@@ -122,7 +122,7 @@ def analyze(prefix, allow_incomplete_copy_sources=False):
                            all_buffer_gpu_copy_bytes=bounds[i+1].get('buffer_gpu_bytes',0)-bounds[i].get('buffer_gpu_bytes',0),
                            all_buffer_cpu_copy_bytes=bounds[i+1].get('buffer_cpu_bytes',0)-bounds[i].get('buffer_cpu_bytes',0)))
     for i, frame in enumerate(frames):
-        for field in ('mapped_direct_bytes','mapped_checked_bytes','mapped_failures'):
+        for field in ('mapped_direct_bytes','mapped_checked_bytes','mapped_failures','command_snapshot_bytes'):
             frame[field] = bounds[i+1].get(field,0)-bounds[i].get(field,0)
             assert frame[field] >= 0
     types = []
@@ -183,7 +183,8 @@ def analyze(prefix, allow_incomplete_copy_sources=False):
                         long_reads=sum(r['duration_ns'] > 5_000_000 for r in rows))
             for stage, rows in semaphore_groups.items()}
     result['mapped_metrics_available'] = 'mapped_direct_bytes' in bounds[0]
-    for field in ('mapped_direct_bytes','mapped_checked_bytes','mapped_failures'):
+    result['command_snapshot_metrics_available'] = 'command_snapshot_bytes' in bounds[0]
+    for field in ('mapped_direct_bytes','mapped_checked_bytes','mapped_failures','command_snapshot_bytes'):
         result[field] = sum(frame[field] for frame in frames)
     copy_sources_complete = meta.get('copy_complete') == '1' and int(meta.get('copy_dropped', '-1')) == 0
     result['copy_sources_complete'] = copy_sources_complete if meta.get('copy_sources') == '1' else None

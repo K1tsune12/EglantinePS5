@@ -15,6 +15,9 @@ static std::uint64_t last_polled_frame{};
 static std::uint64_t pending_nonce{};
 static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
+static std::atomic<bool> command_snapshot_enabled{};
+static std::atomic<std::uint64_t> command_snapshot_bytes{};
+static std::array<std::atomic<std::uint64_t>, 6> command_fetch_counts{};
 static std::atomic<bool> download_batch_enabled{};
 static std::atomic<bool> producer_wait_enabled{};
 static std::atomic<std::uint64_t> producer_waits{}, producer_waits_older{};
@@ -70,13 +73,13 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
         ok &= std::fclose(reads) == 0;
     }
     if (frames) {
-        std::fputs("frame,boundary_ns,buffer_gpu_bytes,buffer_cpu_bytes,mapped_direct_bytes,mapped_checked_bytes,mapped_failures\n", frames);
+        std::fputs("frame,boundary_ns,buffer_gpu_bytes,buffer_cpu_bytes,mapped_direct_bytes,mapped_checked_bytes,mapped_failures,command_snapshot_bytes\n", frames);
         for (unsigned i = 0; i < c.frames; ++i)
-            std::fprintf(frames, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+            std::fprintf(frames, "%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
                 c.boundaries[i].frame,c.boundaries[i].ns,
                 c.boundaries[i].buffer_gpu_bytes,c.boundaries[i].buffer_cpu_bytes,
                 c.boundaries[i].mapped_direct_bytes,c.boundaries[i].mapped_checked_bytes,
-                c.boundaries[i].mapped_failures);
+                c.boundaries[i].mapped_failures,c.boundaries[i].command_snapshot_bytes);
         ok &= std::fclose(frames) == 0;
     }
     std::snprintf(path, sizeof(path), "%s-copies.csv", prefix);
@@ -116,6 +119,27 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
 
 void Frame(std::uint64_t frame, std::uint64_t ns) {
     if (frame % 10 == 0) {
+        const char* snapshot_path = "/data/homebrew/PPSA98515/mkw-command-snapshot-mode.txt";
+        if (FILE* mode = std::fopen(snapshot_path, "r")) {
+            unsigned value{};
+            if (std::fscanf(mode, "%u", &value) == 1 && value <= 1) {
+                command_snapshot_enabled.store(value != 0, std::memory_order_release);
+                std::printf("MKW_COMMAND_SNAPSHOT_MODE frame=%llu mode=%u copied_bytes=%llu\n",
+                    static_cast<unsigned long long>(frame), value,
+                    static_cast<unsigned long long>(command_snapshot_bytes.load()));
+            }
+            std::fclose(mode);
+            std::remove(snapshot_path);
+        }
+        if (frame % 30 == 0) std::printf("MKW_COMMAND_SNAPSHOT_STATS frame=%llu mode=%u copied_bytes=%llu selected=%llu disabled=%llu missing=%llu resumed=%llu gpu_written=%llu dirty=%llu\n",
+            static_cast<unsigned long long>(frame), unsigned(command_snapshot_enabled.load()),
+            static_cast<unsigned long long>(command_snapshot_bytes.load()),
+            static_cast<unsigned long long>(command_fetch_counts[0].load()),
+            static_cast<unsigned long long>(command_fetch_counts[1].load()),
+            static_cast<unsigned long long>(command_fetch_counts[2].load()),
+            static_cast<unsigned long long>(command_fetch_counts[3].load()),
+            static_cast<unsigned long long>(command_fetch_counts[4].load()),
+            static_cast<unsigned long long>(command_fetch_counts[5].load()));
         const char* producer_path = "/data/homebrew/PPSA98515/mkw-producer-wait-mode.txt";
         if (FILE* mode = std::fopen(producer_path, "r")) {
             unsigned value{};
@@ -245,7 +269,8 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
         c = capture_owner.get();
         c->Start(pending_nonce, frame, ns, pending_frames,
                  buffer_gpu_copy_bytes.load(), buffer_cpu_copy_bytes.load(),
-                 mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load());
+                 mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load(),
+                 command_snapshot_bytes.load());
         capture.store(c, std::memory_order_release);
         std::printf("MKW_WAIT_TRACE_ARM nonce=%llu first_boundary=%llu frames=%u capacity=65536\n",
                     static_cast<unsigned long long>(pending_nonce),
@@ -255,7 +280,8 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
     }
     if (c) {
         c->Frame(frame, ns, buffer_gpu_copy_bytes.load(), buffer_cpu_copy_bytes.load(),
-                 mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load());
+                 mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load(),
+                 command_snapshot_bytes.load());
         if (c->Ready()) {
             c->phase.store(Capture::Exporting, std::memory_order_release);
             std::thread([c] { Export(*c); }).detach();
@@ -364,4 +390,14 @@ extern "C" void eden_readback_producer_wait_result(std::uint64_t producer, std::
 extern "C" void eden_download_copy_batch_result(std::uint64_t regions, std::uint64_t commands) {
     Eden::OrderedReadTrace::download_copy_regions.fetch_add(regions, std::memory_order_relaxed);
     Eden::OrderedReadTrace::download_copy_commands.fetch_add(commands, std::memory_order_relaxed);
+}
+
+extern "C" bool eden_command_snapshot_enabled() {
+    return Eden::OrderedReadTrace::command_snapshot_enabled.load(std::memory_order_acquire);
+}
+extern "C" void eden_command_snapshot_captured(std::uint64_t bytes) {
+    Eden::OrderedReadTrace::command_snapshot_bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+extern "C" void eden_command_snapshot_fetch(unsigned reason, std::uint64_t) {
+    if (reason < 6) Eden::OrderedReadTrace::command_fetch_counts[reason].fetch_add(1, std::memory_order_relaxed);
 }

@@ -17,6 +17,9 @@ builds on the following projects, each under its own license.
   core, native shader, readback, service, runtime and test changes. The maintained
   Mario Kart performance patch also carries later core adaptations/backports;
   upstream source retains its GPL-3.0-or-later notices.
+  The opt-in bounded command snapshots adapt kraibse's `cce6d44af2`
+  (ported upstream from Wael3rd/Eglantine-MKW `bd3119a86f`) and the
+  GPU-written/snapshot ordering corrections in `6612817cb4` and `fae3bc64`.
 - **[Catch2](https://github.com/catchorg/Catch2)**, BSL-1.0. Used by the focused
   host regression check at the version and source hash pinned by the core.
 - **[FFmpeg](https://ffmpeg.org)**, LGPL-2.1-or-later. Built from Eden's pinned

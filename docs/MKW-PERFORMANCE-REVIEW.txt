@@ -446,3 +446,42 @@ This bounded run ended without a fresh crash, with a largest free physical
 block of 486 MiB near guest 230 s. It is not a sustained stability or movement
 test. Original executable, package metadata, settings and input controls were
 restored and verified before the lease ended. The 40 FPS goal remains open.
+
+Follow-up candidate: bounded submitted command words
+Profiles from the completed-semaphore trial identify DmaPusher::Step's safe
+command reads as the dominant caller of diagnostic cache-flush timing. The new
+opt-in experiment adapts Zortos submitted-word snapshots (cce6d44af2), including
+GPU-written rejection and first-producer/continued-parameter ordering from
+6612817cb4 and fae3bc64. It retains the current Zortos gitlink and other patches.
+
+Each submission owns immutable words and checked entry offsets. A shared payload
+lease caps one snapshot at 16 MiB and all live payloads/offsets at 64 MiB; at most
+65,536 entries are captured. Overflow, exhausted budget or allocation failure
+retain live reads. CommandList copies share one payload and one reservation.
+At execution, synchronization precedes the GPU-written history check; GPU writes
+remain disqualifying after their flush clears dirty state. Resumed entries,
+continued parameters downloaded from the GPU, unknown mappings and dirty safe
+reads also retain live reads. No guest RAM import or driver change is involved.
+
+MKW_COMMAND_SNAPSHOT_MODE acknowledges same-process off/on controls. Bounded
+selection counters show whether copied entries are actually executed. Complete
+frame streams now count submission-copy bytes separately from buffer readback
+bytes, so moving copies to submission cannot be mistaken for eliminating them.
+The default remains off.
+
+The actual snapshot implementation and DMA synchronization method passed
+ASan/UBSan checks for immutable contents, bounds/overflow, full budget and
+reclamation, shared/cross-thread lifetime, failed-allocation rollback, all
+selection predicates, first queued GPU writes, stale snapshots after a flush,
+and unsupported mappings. The existing core suite passed 179 cases and
+2,239,932 assertions. Old/new analyzer replay preserved existing metrics and
+verified command-copy boundary accounting. Four patches reproduce 133 files.
+Diagnostic native compilation/linking/packaging passed; full source checks were
+explicitly opted out and the retained release instrumentation check is unresolved.
+
+Candidate eboot SHA256:
+97ad5d03330644a6ae8ecc6b862eb75161af06d835c63f0ba4e03f0660522f6f
+The console comparison is queued behind other live sessions. No runtime
+correctness, cache-work reduction, memory saving or FPS benefit is established
+for this candidate yet. Its renderer/capture/profile subprocesses are bounded
+to 30 seconds, and the complete test restores owned files under one console lease.
