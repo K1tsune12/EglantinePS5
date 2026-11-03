@@ -18,6 +18,7 @@ static std::atomic<bool> semaphore_enabled{};
 static std::atomic<bool> command_snapshot_enabled{};
 #ifdef EDEN_MKW_DIAGNOSTICS
 static std::atomic<bool> split_fetch_frontier_enabled{};
+static std::atomic<bool> split_back_short_spin{};
 static constexpr unsigned fetch_tracing_available = 1;
 #else
 static constexpr unsigned fetch_tracing_available = 0;
@@ -196,6 +197,12 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
         }
 #endif
 #ifdef EDEN_MKW_DIAGNOSTICS
+        if (const auto mode = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-split-idle-spin.txt");
+            mode && *mode <= 1) {
+            split_back_short_spin.store(*mode != 0, std::memory_order_release);
+            std::printf("MKW_SPLIT_IDLE_SPIN_MODE frame=%llu mode=%llu budget=%u\n",
+                        static_cast<unsigned long long>(frame), *mode, *mode ? 128U : 8192U);
+        }
         if (const auto mode = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-split-fetch-mode.txt");
             mode && *mode <= 1) {
             split_fetch_frontier_enabled.store(*mode != 0, std::memory_order_release);
@@ -496,6 +503,13 @@ extern "C" bool eden_split_fetch_frontier_enabled() {
     return Eden::OrderedReadTrace::split_fetch_frontier_enabled.load(std::memory_order_acquire);
 #else
     return false;
+#endif
+}
+extern "C" unsigned eden_split_back_idle_spins() {
+#ifdef EDEN_MKW_DIAGNOSTICS
+    return Eden::OrderedReadTrace::split_back_short_spin.load(std::memory_order_acquire) ? 128U : 8192U;
+#else
+    return 8192U;
 #endif
 }
 extern "C" std::uint64_t eden_split_fetch_begin(std::uint64_t target,

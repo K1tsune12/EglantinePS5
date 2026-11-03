@@ -7,7 +7,8 @@ Maintained patch 0004 is incremental over the existing three patches; patch
 0005 bounds shader-module retention after pipeline compilation, 0006 adds the
 opt-in command-fetch frontier experiment, and 0007 records oversized-index
 provenance on failure. Patch 0008 extends the experimental frontier to compute
-store-only writes; eight maintained patches reproduce 143 core files. The
+store-only writes; patch 0009 adds a separate opt-in idle-spin experiment.
+Nine maintained patches reproduce 143 core files. The
 review branch is based on main 3c32faa and preserves its extracted-content
 and Pokopia fixes. No core fork switch or driver binary is included.
 
@@ -1318,3 +1319,47 @@ The diagnostic comparison is queued behind another live console task; the
 normal variant has not been console-tested. It will compare complete per-frame
 ordered-read/copy/fetch streams, unarmed guest-frame batches and kernel thread
 counters. No sampling-session reset or ownership override is attempted.
+
+Backend idle-spin investigation (historical profile, new candidate untested)
+The separate three-second PID 797 profile has 204 GPUBack leaf samples, of
+which 64 are inside BackLoop. Re-symbolizing their exact leaf PCs against the
+matched ELF (SHA 1bb748a69302220768bbc671b30aaad083b14545f462341e68f459c8055352f6)
+and inspecting that function with LLVM objdump identifies 49 samples at runtime
+0x18d38d2 and five at 0x18d38d9. After subtracting the verified 0x400000 load
+bias, both instructions are in the empty-queue loop following PAUSE and before
+the 8,192-iteration limit. Thus 54/64 BackLoop leaf samples (84.375%) and
+54/204 backend samples (26.47%) fall in that spin loop. Nine other BackLoop
+leaf samples are at the Execute call and one at its loop comparison.
+
+This is sampled CPU weight from one historical short run, not a universal CPU
+percentage, instruction cycle cost or a new console measurement. Instruction
+boundary sampling can skid. REA opened the exact ELF successfully, but its
+Rizin provider was unavailable (ENOENT); the focused disassembly is ordinary
+LLVM tool output, not successful REA disassembly Evidence. No game binary was
+analyzed and no live process was touched for this static analysis.
+
+Patch 0009 makes only the empty-queue spin budget diagnostic-selectable:
+original 8,192 iterations (mode 0) versus 128 (mode 1). Publication, ring-space
+reclamation, completion acknowledgement, stop handling and the lost-wakeup
+checks before atomic waiting are unchanged. The optional weak hook is bounded
+at 8,192; normal builds return the original budget. A short-spin choice may
+reduce CPU contention or increase wake latency; it does not remove producers,
+GPU barriers or ordered CPU reads. No FPS/CPU benefit is established yet.
+
+The actual split ring/dispatch/wait fixture passes ASan/UBSan and TSan for
+zero, 128, 8,192 and clamped 16,384 requested budgets, with both fetch-frontier
+settings. Both nine-patch normal and diagnostic native chains passed all
+required source checks, build/link/package and 179 core cases / 2,239,932
+assertions each. Nine patches reproduce 143 core files. The driver is unchanged.
+  Diagnostic eboot: b80b0874ea962d9989747ec6aa5d24cb1e14839ccaa85833551ba87372f41420
+  Diagnostic ELF:   b62bf6e77c6750f514ad358979e1a876e1bc35632d36c4c51bdf6c46574d8246
+  Normal eboot:     b9381138d8ef4348e17d01f7b37930b279f150f0c7c512ed220f1f7c11f75209
+  Normal ELF:       c45906027d2dc251636a2b938ca27ff5dd247164b6b347784d36a8dde96c4d63
+
+Neither nine-patch artifact has been console-tested. The earlier frozen
+eight-patch compute-frontier runner remains queued behind a confirmed live
+console test; it will not use this spin-budget change. Its harness now attempts
+a matched-ELF three-second profile only after all comparison windows; it never
+resets the shared sampler. The spin candidate is prepared separately and has
+not been queued. It will need its own same-scene read/copy/fetch and CPU-counter
+comparison before any default change is justified.

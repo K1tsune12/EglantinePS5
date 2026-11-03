@@ -80,6 +80,7 @@ assert header.count('private:') == 1
 header = header.replace('private:', 'public:')  # Test access only, never the compiled port.
 code = r'''
 #include <cassert>
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <chrono>
@@ -102,6 +103,9 @@ struct Scope {explicit Scope(Zone){}};
 void Report(const char* = nullptr){}
 }
 std::atomic<bool> narrow{true};
+std::atomic<unsigned> idle_spins{8192};
+extern "C" unsigned eden_split_back_idle_spins() __attribute__((weak));
+extern "C" unsigned eden_split_back_idle_spins(){return idle_spins.load();}
 std::atomic<unsigned> trace_begins{},trace_ends{};
 extern "C" bool eden_split_fetch_frontier_enabled() __attribute__((weak));
 extern "C" u64 eden_split_fetch_begin(u64,u64,u64,unsigned) __attribute__((weak));
@@ -151,8 +155,8 @@ void start(Split& s,Core::System& system){
 ''' + compute_fixture + r'''
 int main(){
  Core::System system;
- for(bool enabled:{false,true}){
-  narrow.store(enabled);Split s;Engine engine;
+ for(unsigned budget:{0U,128U,8192U,16384U})for(bool enabled:{false,true}){
+  idle_spins.store(budget);narrow.store(enabled);Split s;Engine engine;
   std::atomic<bool> writer_started{},writer_release{};
   std::atomic<unsigned> guest{};
   constexpr GPUVAddr address=0x50000;
@@ -253,9 +257,9 @@ int main(){
   bool state_only=mask&1,pending=mask&2;
   assert(Frontier::StateWriteMayExecute(state_only,pending)==(!state_only||pending));
  }
- assert(trace_begins==trace_ends&&trace_begins==2);
+ assert(trace_begins==trace_ends&&trace_begins==8);
  std::cout<<"Actual split ring PASS: first queued writer, state tail, OFF/ON ordering, "
-              "mid-batch completion, unknown callbacks/multi writes, compute store-only classification and restart reset\n";
+              "mid-batch completion, unknown callbacks/multi writes, compute store-only classification, zero/short/default/clamped idle budgets and restart reset\n";
 }
 '''
 with tempfile.TemporaryDirectory(prefix='split-frontier-') as temporary:
