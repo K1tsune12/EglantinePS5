@@ -485,3 +485,52 @@ The console comparison is queued behind other live sessions. No runtime
 correctness, cache-work reduction, memory saving or FPS benefit is established
 for this candidate yet. Its renderer/capture/profile subprocesses are bounded
 to 30 seconds, and the complete test restores owned files under one console lease.
+
+Bounded command snapshots: console result
+Run 1793668255561415996 used the candidate above (fresh PID 690). GPT-6.1 Terra
+inspected title/menu/Free Roam and all four phase images per the user's screenshot
+policy: the same stationary kart/camera and canyon landmarks remained visible,
+with plausible geometry, textures, lighting and minimap; NPC traffic moved.
+Direct mapped reads stayed 2; semaphore reads, producer waiting, copy batching
+and selective notifications were off. Snapshot modes were 0,1,0,1. All four
+ten-frame read/copy streams were complete. Twenty pooled frames per mode:
+  FPS:                         14.0791 / 14.2059
+  Ordered reads/frame:        182.4 / 186.45
+  Reads over 5 ms:             20 / 20
+  Read-call CPU ms/frame:      42.7676 / 41.7859
+  Frontend queue ms/frame:     39.2237 / 38.1840
+  Backend queue ms/frame:       0.32559 / 0.33126
+  GPU wait API ms/frame:        0.33101 / 0.32992
+  GPU staging B/frame:       972080 / 972723.2
+  CPU buffer copy B/frame:  1016880 / 1017523.2
+  Direct mapped B/frame:     44800 / 44800
+  Command snapshot B/frame:      0 / 1095312.6
+Individual read-call median/p95/max were 0.025017/0.048752/38.093687 ms off
+and 0.024697/0.049234/37.582666 ms on. CPU durations overlap across threads.
+
+The final enabled counters show 1,529,542 selected copied entries, 3,600 resumed
+entries and 74,500 producer-history/mapping rejections (the runtime field is
+named gpu_written; it conservatively includes unknown mappings). No missing
+snapshots or additional safe-dirty rejections were counted while enabled. About
+95% of these fetches used snapshots: this is an exercised negative result. The
+counter intervals extend beyond the trace windows. The CPU copied about 1.1 MB
+extra command words per frame. There is no meaningful FPS or ordered-wait gain;
+one long read per frame remains. The snapshot experiment stays off by default.
+
+The shared ps5-perf payload rejected the recording with "another sampling
+session is active" after a different task's earlier run. This candidate has no
+new CPU profile. The bounded runner recorded that failure and completed the
+independent frame/read/copy comparison; it did not reset the shared payload.
+Original executable, metadata, settings and owned input files were restored and
+verified before lease release. No fresh crash occurred in this bounded run;
+largest free physical block remained 486 MiB near guest 240 s. This does not
+establish sustained stability, movement correctness or the 40 FPS objective.
+
+Separate memory-policy audit: RefreshFreeMemory uses the largest contiguous
+physical block, adjusted for the guest reserve, as the cache-free estimate.
+GraphicsMemoryShort uses a 1 GiB threshold justified by an earlier 486 MiB
+allocation. The exercised run already selected ASTC-to-BC3 recompression on its
+6 GiB reported graphics budget. Total free memory and the distribution of
+actual late allocation sizes still need measurement before relaxing collection;
+fragmentation cannot be equated to total exhaustion or ignored outright. No
+memory-pressure policy was changed in this experiment.
