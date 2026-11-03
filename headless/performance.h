@@ -473,6 +473,7 @@ inline void CountJit(std::atomic<unsigned long long>& counter) {
 // totals with the owner's CPU clock, then a guest-core CPU snapshot.
 void ReportGpuThread(unsigned frame);
 void ReportMemoryPressure(unsigned seconds);
+void ReportVma(unsigned tag);
 void ReportDirectPool(unsigned long long nonce);
 // The heap's line in stderr.log: what it holds of the pool, what of that its blocks use, what it has given back.
 void ReportHeap(const char* why);

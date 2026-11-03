@@ -11534,7 +11534,7 @@ index 89aff1cd0e..3a23139f19 100644
      bool IsKhrImageFormatListSupported() const {
          return extensions.image_format_list || instance_version >= VK_API_VERSION_1_2;
 diff --git a/src/video_core/vulkan_common/vulkan_memory_allocator.cpp b/src/video_core/vulkan_common/vulkan_memory_allocator.cpp
-index 79328cbc69..05ad0e0e91 100644
+index 79328cbc69..3abc64c50f 100644
 --- a/src/video_core/vulkan_common/vulkan_memory_allocator.cpp
 +++ b/src/video_core/vulkan_common/vulkan_memory_allocator.cpp
 @@ -5,6 +5,9 @@
@@ -11547,7 +11547,16 @@ index 79328cbc69..05ad0e0e91 100644
  #include <array>
  #include <bit>
  #include <limits>
-@@ -229,7 +232,8 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
+@@ -26,6 +29,8 @@
+ #include "video_core/gpu_logging/gpu_logging.h"
+ #include "common/settings.h"
+ 
++extern "C" void eden_vma_buffer_failure(unsigned long long, unsigned, int) __attribute__((weak));
++
+ namespace Vulkan {
+ namespace {
+ 
+@@ -229,7 +234,8 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
      // They take the unbacked sparse fallback below.
      const u64 texels = u64{ci.extent.width} * ci.extent.height * ci.extent.depth * ci.arrayLayers;
      const bool huge = texels > (u64{1} << 28) && ci.samples == VK_SAMPLE_COUNT_1_BIT &&
@@ -11557,7 +11566,7 @@ index 79328cbc69..05ad0e0e91 100644
      VkResult result = huge ? VK_ERROR_OUT_OF_DEVICE_MEMORY
                             : vmaCreateImage(allocator, &ci, &alloc_ci, &handle, &allocation, &alloc_info);
      if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY && !huge) {
-@@ -260,6 +264,45 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
+@@ -260,6 +266,45 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
              return sparse;
          }
      }
@@ -11603,7 +11612,7 @@ index 79328cbc69..05ad0e0e91 100644
      if (result != VK_SUCCESS) {
          LOG_CRITICAL(Render_Vulkan, "Image {}x{}x{} ({} levels, {} layers, format {}) failed: {}",
                       ci.extent.width, ci.extent.height, ci.extent.depth, ci.mipLevels,
-@@ -282,7 +325,7 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
+@@ -282,7 +327,7 @@ vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicat
  }
  
  vk::Image MemoryAllocator::CreateUnbackedImage(const VkImageCreateInfo &ci) const {
@@ -11612,7 +11621,7 @@ index 79328cbc69..05ad0e0e91 100644
          !device.IsSparseResidencyImageSupported(ci.imageType)) {
          return vk::Image{};
      }
-@@ -357,6 +400,15 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
+@@ -357,6 +402,18 @@ vk::Buffer MemoryAllocator::CreateBuffer(const VkBufferCreateInfo &ci, MemoryUsa
          host_ci.memoryTypeBits = 0;
          result = vmaCreateBuffer(allocator, &ci, &host_ci, &handle, &allocation, &alloc_info);
      }
@@ -11624,6 +11633,9 @@ index 79328cbc69..05ad0e0e91 100644
 +                         static_cast<unsigned long long>(ci.size), unsigned(usage), ci.usage);
 +            std::fclose(file);
 +        }
++    }
++    if (result != VK_SUCCESS && eden_vma_buffer_failure) {
++        eden_vma_buffer_failure(ci.size, static_cast<unsigned>(usage), static_cast<int>(result));
 +    }
      vk::Check(result);
      vmaGetAllocationMemoryProperties(allocator, allocation, &property_flags);

@@ -9,10 +9,11 @@ and Pokopia fixes. No core fork switch or driver binary is included.
 
 Current build status: normal and MKW diagnostic configurations pass all required
 native build checks without EDEN_SKIP_SOURCE_CHECKS. The earlier release CPU
-instrumentation failure recorded below is resolved by the final follow-up.
-Neither newly checked artifact has been console-qualified; the queued fixed
-location experiment retains its separately verified earlier diagnostic artifact.
-Sustained memory stability and the 40 FPS goal remain unproven.
+instrumentation failure recorded below is resolved. The latest diagnostic
+artifact was console-tested through a Crown City travel attempt, which failed
+with a staging allocation error before Free Roam. The final normal artifact has
+not been console-tested. Sustained memory stability and the 40 FPS goal remain
+unproven. The final follow-up below records these failures and exact artifacts.
 
 The accumulated changes cover task/mesh shader handling, GPU mapping and
 readback tracking, bounded texture uploads and ASTC decoding, staging
@@ -743,6 +744,92 @@ MKW diagnostics on, other DEV options off:
   eboot 8526c257a3db531ee00954fedb5f271099ec7483a6aafa5c3232b7c99074d1a4
   ELF   6c3890c5aa4655edbfccc4dbea0a343cee8153eea155a798c24c57eff05bc08f
 Both retain the previously recorded isolated RADV archive and Zortos gitlink.
-These artifacts have not been deployed or console-tested. The already queued
-navigation comparison uses the earlier c81791b3 diagnostic artifact with its
-original symbols/settings receipt; it cannot validate this normal configuration.
+At the time of this build, these artifacts had not been deployed. Before the
+queued navigation comparison started, its candidate was updated to the checked
+8526c257 diagnostic artifact and matching symbols. It cannot validate the normal
+configuration. The follow-up below records its failed console attempt.
+
+Follow-up: explicit heavy diagnostics and allocation failure evidence
+GPU command recording and full VMA maps now require explicit requests in MKW
+diagnostic builds. Previously the loading sampler armed the bounded command
+ring at 20 seconds and finalized it at 65 seconds; it was not still recording
+at the later allocation failures. Removing automatic recording avoids that
+loading overhead, but does not establish it as the cause of memory exhaustion.
+Automatic VMA maps at 90/150/210/270 seconds are also removed. Lightweight
+progress and memory summaries remain.
+
+Controls live under /data/homebrew/PPSA98515 and are consumed outside pending
+or active ordered-read windows:
+  mkw-gpfifo-mode.txt: 0 disables, 1 requests bounded command recording.
+  mkw-gpfifo-flush.txt: 1 finalizes the capture once for this process lifetime.
+  mkw-vma-probe.txt: a tag from 1 through 1,000,000 requests a full VMA map.
+Malformed/trailing-token requests are discarded. Recording acknowledgements
+report actual active state; a finalized capture cannot falsely acknowledge
+rearming. Ordered-read metadata records gpu_command_capture_at_arm so analysis
+can reject windows collected with command recording active. The recording-on,
+manual-flush and manual-map paths have not been exercised on console in this
+follow-up; the mode-0 inactive acknowledgement was verified.
+
+A failure-only weak hook in the common Vulkan CreateBuffer path reports the
+logical buffer size, memory usage, Vulkan result, physical pool capacity,
+largest free block and kernel query status before the existing failure handler.
+It does not traverse VMA/cache state, change allocation policy or wait on the
+GPU. The aligned-buffer overload is unchanged. Normal builds use a no-op hook.
+The pool capacity is not total free memory; a failed/unsupported kernel query
+must not be treated as proof of zero free space.
+
+Both final native configurations completed all required checks, linking and
+packaging with EDEN_SKIP_SOURCE_CHECKS=0; each passed 179 core cases /
+2,239,932 assertions. The generated production-probe check, patch reproduction
+(four patches, 135 core files) and source whitespace checks passed. Earlier
+attempts failed a host-fixture include and a port adaptation anchor; both were
+fixed before the successful builds, and neither failed attempt was packaged.
+No full-profiler build or driver change is claimed.
+
+Latest diagnostic eboot SHA256:
+298e4eb60eccb6b4a3fbe51511f023478a2e9010684edcf30d3133d1e0350075
+Matched ELF:
+90d8c0bc5dc4199b338f21c2da8894cd197484463b093adf74666fe924a7c0d8
+Latest normal eboot SHA256:
+63d3b6033b895dbb00a98821e11fa66f447e515ec98fb9d08a7adf070e85094f
+Matched ELF:
+1c9b83454d41841d9eea65b2f107bd5e9aae0d96aa3eb661ff7fc4c8f9808eef
+Core patch 0004 SHA256:
+e185fcfe9aa46437f17a17b0a3909161956adee2f75cb140fcab2274216e66a0
+Both retain the recorded Zortos gitlink and isolated RADV archive.
+
+Two navigation attempts failed before approved Free Roam or measurement:
+  Run 1793676321023369210, PID 751 (8526c257 diagnostic artifact):
+  Common buffer allocation returned VK_ERROR_OUT_OF_DEVICE_MEMORY. Staging
+  asked for 5,592,432 bytes, rounded to 8 MiB, and completed reclamation released
+  nothing. The last pool probe reported 696,057,856 free bytes and a largest
+  block of 482,344,960 bytes; it was earlier than the failure and cannot explain
+  the pool state at failure. The last VMA map held 3,766,419,496 block bytes and
+  3,397,015,576 allocation bytes. The process restarted as PID 752.
+
+  Run 1793678471977902094, PID 758 (298e4eb6 diagnostic artifact):
+  The explicit mode-0 acknowledgement reported command recording inactive.
+  GPT-6.1 Terra identified the initial scripted captures as loading, title and
+  main menu rather than the intended stages, so no trace was armed. Controller
+  correction opened the world map, selected Crown City and confirmed its
+  "Begin free roam?" dialog. The next reviewed image was a travel/loading
+  screen. Before arrival the failure hook reported:
+    bytes=50331648 usage=1 result=-2
+    direct_total=12817793024 largest_free=17432576 query_status=0
+  Staging requested 45,973,504 bytes, rounded to 48 MiB; reclamation released
+  nothing. The successful kernel query found a largest block of 16.625 MiB,
+  smaller than the logical buffer request. Total free memory at failure is
+  unknown; this is evidence of insufficient contiguous space for that request,
+  not proof that all memory was exhausted. The process restarted as PID 759.
+  The responsible texture/caller and a safe upload-batching remedy remain
+  unverified. No batching change is included in this follow-up.
+
+Each attempt held one console lease through deployment, testing and verified
+restoration of executable, metadata, settings and owned input/controls. Both
+persisted pipeline cache files retained their before/after hashes. Pre-restart
+live logs are the failure evidence; logs fetched after restart belong to the
+launcher and are excluded from game measurements. The second attempt also
+collected system logs. Neither attempt supplies a valid Free Roam wait window,
+an FPS improvement, movement validation or sustained stability qualification.
+The final normal configuration remains untested on console. The PR remains a
+research draft with experimental alternatives disabled by default.

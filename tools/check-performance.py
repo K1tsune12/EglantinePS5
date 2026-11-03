@@ -58,6 +58,12 @@ assert 'Timer read_timer' not in cmake
 assert 'Timer compile_timer' not in cmake
 assert 'protection_timer' not in cmake
 main = (root / 'headless/main.cpp').read_text()
+assert 'LoadingProbe::capture_enabled = true' not in main
+assert 'mkw-loading-snapshot' not in main
+performance = (root / 'headless/performance.cpp').read_text()
+memory_report = performance.split('void ReportMemoryPressure(unsigned seconds)', 1)[1].split(
+    '\nvoid ReportVma(', 1)[0]
+assert 'eden_vma_probe(' not in memory_report
 assert 'Performance::Reset()' not in main
 assert 'Performance::Report()' not in main
 assert 'Settings::values.renderer_debug = false;' in main

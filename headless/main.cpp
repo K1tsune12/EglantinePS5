@@ -1638,11 +1638,8 @@ int main(int argc, char** argv) {
                                     }
                                 }
                             }
-                            if (diagnostic_sample == 1) {
-                                VideoCommon::LoadingProbe::capture_enabled = true;
-                                LOG_CRITICAL(HW_GPU, "MKW GPFIFO ring armed, maximum8MiB/4096records");
-                            }
-                            if (diagnostic_sample == 4) Tegra::GpfifoCapture::Flush("mkw-loading-snapshot");
+                            // Verbose command capture is armed explicitly through the
+                            // frame controls; an elapsed-time probe must not enable it.
                             const auto report = [](const char* name, auto& channel) {
                                 LOG_CRITICAL(Render_Vulkan, "MKW progress {} phase={} arg={:#x} serial={}", name,
                                     channel.phase.load(), channel.argument.load(), channel.serial.load());

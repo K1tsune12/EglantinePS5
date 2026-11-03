@@ -17,6 +17,7 @@ static unsigned pending_frames{};
 static std::atomic<bool> semaphore_enabled{};
 static std::atomic<bool> command_snapshot_enabled{};
 static std::atomic<std::uint64_t> command_snapshot_bytes{};
+static std::atomic<bool> command_capture_at_arm{};
 static std::array<std::atomic<std::uint64_t>, 6> command_fetch_counts{};
 static std::atomic<bool> download_batch_enabled{};
 static std::atomic<bool> producer_wait_enabled{};
@@ -37,6 +38,22 @@ struct SemaphoreReasons {
 };
 static std::array<SemaphoreReasons, 32> semaphore_reasons{};
 static constexpr const char* arm_path = "/data/homebrew/PPSA98515/mkw-wait-arm.txt";
+
+#ifdef EDEN_MKW_DIAGNOSTICS
+// Consume only owned requests. No automatic command ring or allocator map dump
+// should add work while an ordinary performance measurement is running.
+static std::optional<unsigned long long> ReadDiagnosticRequest(const char* path) {
+    if (FILE* request = std::fopen(path, "r")) {
+        unsigned long long value{};
+        char trailing{};
+        const bool valid = std::fscanf(request, "%llu %c", &value, &trailing) == 1;
+        std::fclose(request);
+        std::remove(path);
+        if (valid) return value;
+    }
+    return {};
+}
+#endif
 
 static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
     char prefix[192], path[224];
@@ -109,6 +126,7 @@ static void Export(Capture& c, const char* folder = "/data/eglantineps5/logs") {
                      "\ncopy_dropped=%" PRIu64 "\ncopy_complete=%d\n",
                      c.CopyCount(), c.copy_next.load(), c.copy_dropped.load(),
                      int(copies_ok && c.copy_dropped.load() == 0));
+        std::fprintf(meta, "gpu_command_capture_at_arm=%u\n", unsigned(command_capture_at_arm.load()));
         std::fclose(meta);
     }
     std::printf("MKW_WAIT_TRACE_DONE prefix=%s records=%zu dropped=%llu frames=%u complete=%d\n",
@@ -123,6 +141,26 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
         // The expensive read-only kernel enumeration never overlaps an armed trace.
         const auto* active_capture = capture.load(std::memory_order_acquire);
         if (!pending_nonce && (!active_capture || active_capture->phase.load() == Capture::Done)) {
+            if (const auto mode = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-gpfifo-mode.txt");
+                mode && *mode <= 1) {
+                VideoCommon::LoadingProbe::capture_enabled.store(*mode != 0);
+                const bool active = Tegra::GpfifoCapture::Enabled();
+                // Flush finalizes this bounded capture for the process lifetime.
+                // A subsequent arm request must not falsely acknowledge recording.
+                if (!active) VideoCommon::LoadingProbe::capture_enabled.store(false);
+                std::printf("MKW_GPFIFO_MODE frame=%llu mode=%llu active=%u\n",
+                            static_cast<unsigned long long>(frame), *mode, unsigned(active));
+            }
+            if (const auto flush = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-gpfifo-flush.txt");
+                flush && *flush == 1) {
+                Tegra::GpfifoCapture::Flush("manual-request");
+                VideoCommon::LoadingProbe::capture_enabled.store(false);
+                std::printf("MKW_GPFIFO_FLUSH frame=%llu\n", static_cast<unsigned long long>(frame));
+            }
+            if (const auto tag = ReadDiagnosticRequest("/data/homebrew/PPSA98515/mkw-vma-probe.txt");
+                tag && *tag > 0 && *tag <= 1'000'000) {
+                ::Eden::Performance::ReportVma(static_cast<unsigned>(*tag));
+            }
             const char* pool_path = "/data/homebrew/PPSA98515/mkw-direct-pool-probe.txt";
             if (FILE* request = std::fopen(pool_path, "r")) {
                 unsigned long long nonce{};
@@ -285,6 +323,9 @@ void Frame(std::uint64_t frame, std::uint64_t ns) {
                  buffer_gpu_copy_bytes.load(), buffer_cpu_copy_bytes.load(),
                  mapped_direct_bytes.load(), mapped_checked_bytes.load(), mapped_failures.load(),
                  command_snapshot_bytes.load());
+#ifdef EDEN_MKW_DIAGNOSTICS
+        command_capture_at_arm.store(Tegra::GpfifoCapture::Enabled());
+#endif
         capture.store(c, std::memory_order_release);
         std::printf("MKW_WAIT_TRACE_ARM nonce=%llu first_boundary=%llu frames=%u capacity=65536\n",
                     static_cast<unsigned long long>(pending_nonce),
