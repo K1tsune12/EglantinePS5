@@ -110,6 +110,11 @@ if(EDEN_VULKAN_DRIVER STREQUAL "RADV")
     if(NOT EXISTS "${radv_archive}")
         message(FATAL_ERROR "Build and isolate the pinned RADV release archive first")
     endif()
+    execute_process(COMMAND python3 "${PORT_ROOT}/tools/isolate-radv.py" --check
+        COMMAND_ERROR_IS_FATAL ANY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${PORT_ROOT}/build/radv-isolated/manifest.json"
+        "${PORT_ROOT}/tools/isolate-radv.py")
     target_link_libraries(video_core PRIVATE "${radv_archive}"
         "${PORT_ROOT}/build/stubs/libSceAgcDriver.so"
         "${sdk}/target/lib/libSceSysmodule.so")

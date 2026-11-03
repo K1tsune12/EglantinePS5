@@ -46,7 +46,7 @@ cmake -S "$scratch/source" -B "$scratch/native-local" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$root/headless/ps5.cmake" -DPS5_NATIVE=ON -DEDEN_DEVICE_FRONTEND="$devices" \
     -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO=OFF \
     -DEDEN_PS5_VULKAN="${EDEN_PS5_VULKAN:-OFF}" \
-    -DEDEN_VULKAN_DRIVER="${EDEN_VULKAN_DRIVER:-CUSTOM}" \
+    -DEDEN_VULKAN_DRIVER="${EDEN_VULKAN_DRIVER:-RADV}" \
     -DEDEN_DEV_VULKAN="${EDEN_DEV_VULKAN:-OFF}" \
     -DCMAKE_C_COMPILER_LAUNCHER="$cache" -DCMAKE_CXX_COMPILER_LAUNCHER="$cache" \
     -DEDEN_DEV_ROM_ID="${EDEN_DEV_ROM_ID:-}" \
@@ -75,6 +75,12 @@ cmake --build "$scratch/native-local" --target eden-headless core -j "$jobs"
 python3 -B "$root/tools/check-sparse-header.py" "$scratch/native-local"
 python3 -B "$root/tools/check-multiplayer-headers.py" "$scratch/native-local"
 if [[ "${EDEN_PS5_VULKAN:-OFF}" == ON ]]; then
+    if [[ "${EDEN_VULKAN_DRIVER:-RADV}" == RADV ]]; then
+        python3 -B "$root/tools/check-radv-artifact.py"
+        if [[ "$probe" == OFF && "$graphics" == ON ]]; then
+            python3 -B "$root/tools/check-radv-native.py"
+        fi
+    fi
     python3 -B "$root/tools/check-vulkan-handoff.py"
     python3 -B "$root/tools/check-transient-images.py"
     python3 -B "$root/tools/check-native-allocator-header.py"
