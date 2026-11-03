@@ -18,6 +18,7 @@ cache=$(command -v ccache)
 export CCACHE_NODIRECT=1
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
+python3 -B tools/check-source-sync.py
 bash tools/build-core-fixture.sh
 scratch=$(cat .local/headless-cache)
 [[ "$scratch" == "${XDG_CACHE_HOME:-$HOME/.cache}"/ps5-eden-headless.* && "$(cat "$scratch/owner")" == "$root" ]]

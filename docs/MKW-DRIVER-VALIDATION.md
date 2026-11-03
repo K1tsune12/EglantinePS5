@@ -788,7 +788,7 @@ restored and verified (settings SHA256 0b0d73fc..., full hash above); idle was
 confirmed before lease release. No long-term stability claim is made.
 
 
-ASTC opacity scan candidate (console validation queued)
+ASTC opacity scan candidate (initial artifact excluded)
 ------------------------------------------------------
 
 The computational fast path reviewed from sibling commit `57cf423` reads the
@@ -815,12 +815,13 @@ reproduce 133 core files. The candidate eboot is
 matched ELF
 `c8880ef1df66d251651b62f4aeab5603f711d23da35ef67e93ce21e01ad1e0d9`,
 source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-780987f1b5d6`.
-The bounded Low/reactive-off/1x/framegen-off trial is queued under the shared
-console lease. Runtime rendering, FPS and stability for this artifact remain
-unverified. The >40 FPS objective remains unmet.
+The initial Low/reactive-off/1x/framegen-off trial failed before measurement.
+The artifact also retained an obsolete GPU-split default, as documented below;
+it cannot qualify performance of the retained source. The >40 FPS objective
+remains unmet.
 
 
-Descriptor invalidation candidate (console validation queued)
+Descriptor invalidation candidate (initial artifact excluded)
 -----------------------------------------------------------
 
 The next candidate replaces full descriptor-read bitset clearing with per-word
@@ -856,11 +857,11 @@ The candidate eboot is
 matched ELF
 `81edb8cf46e49e393d44bba818f1fa36bec29a93debc491ab661c639ddb52122`,
 source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-b9de4ef6eb59`.
-This artifact includes the preceding ASTC scan change. Its bounded
-Low/reactive-off/1x/framegen-off console trial is separately queued under the
-shared lease, with original-file and preference restoration. Both this trial
-and the ASTC-only trial remain pending; no title FPS gain or runtime rendering
-claim is made for either artifact. The >40 FPS objective remains unmet.
+This artifact includes the preceding ASTC scan change. Its initial bounded
+Low/reactive-off/1x/framegen-off console trial was rejected by the required
+front-macro mode guard. Source/ELF auditing found the obsolete fallback below.
+Neither this artifact nor the ASTC-only one qualifies performance of retained
+source. The >40 FPS objective remains unmet.
 
 
 Staging-only command-list wait diagnostic (not retained)
@@ -901,9 +902,83 @@ Diagnostic eboot:
 matched ELF:
 `272fb2fdad66bdef981a95899185babcfc4ae2eb4e5932ab37c6c47c8b33c953`,
 source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-2b561656846a`.
-The full/prefix/full console comparison is queued under the lease at Low
+The full/prefix/full console comparison completed under the lease at Low
 accuracy, reactive flushing off, 1x and frame generation off. The diagnostic
 patch/source were archived privately and removed from the retained tree after
 freezing this artifact. The public branch still reproduces eight patches /
-134 core files and retains full command-list drains. No rendering, stability
-or FPS claim is made for this diagnostic before its console result.
+134 core files and retains full command-list drains. Its console results and their limits follow.
+
+
+Completed wait trial and source/ELF mismatch audit
+-------------------------------------------------
+
+Run `1793706167102802180`, fresh PID 896, confirmed front-thread macros and
+all intended launch settings. The same executable's four-byte atomic was
+verified and changed 0/1/0, then restored to its exact original zero value.
+Full first-observed windows with two-second margins gave:
+
+| Phase | Frames / seconds | FPS | Worst frame |
+| --- | --- | --- | --- |
+| Full A | 175 / 10.051941 | 17.409573 | 190.189 ms |
+| Staging-tail prefix | 168 / 10.027985 | 16.753116 | 149.832 ms |
+| Full B | 140 / 10.396478 | 13.466099 | 595.975 ms |
+
+Terra inspected all seven captures. They show rendered title attract scenes,
+starting on the coastal industrial road and changing to inland junction,
+bridge and hillside scenes. No obvious major foreground corruption or
+occlusion problem was visible; some distant track-like pieces in the initial
+view cannot be classified from the still. Camera/scene changes prevent a
+controlled equivalence or speedup conclusion. Still images do not establish
+absence of transient artifacts. The mode-one log at its end capture recorded
+509,935 shortened waits and 996,564 trailing words, demonstrating execution of
+the proposed path. Subsequent three-second stat samples measured GPU front
+0.408 / 0.464 / 0.397 CPU and 69,885 / 18,399 / 51,627 context switches; GPUBack
+0.636 / 0.687 / 0.633 CPU. Lower context-switch count does not establish a frame
+rate benefit. The optimization remains unretained. All per-PID dump files were
+absent, atomic/package/controls/exact preference restoration was verified and
+idle confirmed. No >40 FPS or long-term stability result was obtained.
+
+The ASTC-only run `1793705929353227070`, PID 891, restarted before its 800-frame
+readiness threshold. Its crash report records GPUBack termination for
+VK_ERROR_OUT_OF_DEVICE_MEMORY at **90 seconds**, largest contiguous free block
+rounded down to **0 MiB**. Staging allocation failed for 699,064 requested bytes
+(1 MiB allocation); releasing 177 completed buffers totaling 3 MiB did not
+resolve it, and a subsequent 1,398,128-byte request (2 MiB) failed. Exact ELF
+symbolization and preceding call bytes support the CreateBuffer / staging
+buffer request / ASTC-to-BCn transcode path; scanned stack entries are not a
+continuous unwound backtrace. No screenshot or valid measured window exists.
+The original package and preferences were restored, hash verified and idle
+confirmed. This is not evidence of a regression caused by the opacity scan.
+
+The descriptor run `1793706047026434222`, PID 894, reached readiness but its
+GPU-split log omitted the required front-macro suffix. The guard rejected the
+run before capture or measurement, and original files/preferences were restored
+and verified. ELF disassembly then found an obsolete **mode '1'** fallback in
+both initial cache artifacts: `movb $0x31,%al` at 0x148f5cf in their respective
+matched ELFs. Retained source selected **'2'**. Neither build log rebuilt
+gpu_split.cpp. The diagnostic's forced recompilation did rebuild it and its
+ELF contains `movb $0x32,%al` at 0x148f5ce; its console log confirmed front macros.
+Consequently the earlier cache artifacts are excluded as source qualification,
+even though their build checks and host algorithm fixtures passed.
+
+The synchronization script preserved restored source timestamps with rsync -a,
+which could leave a newer stale Ninja object untouched. It now compares content
+and assigns fresh mirror timestamps to changed files. A versioned policy
+refreshes legacy mirrors once, including when their source stamp already
+matches, while preserving the dependency cache. An actual CMake/Ninja fixture
+proves rebuilds for legacy stale objects, same-size tracked and untracked
+old-mtime restores, no-op object preservation and deletion semantics. The old
+script fails the fixture (executable returns 1 instead of 2); the revised script
+passes. The native build now runs that regression gate. A one-time refreshed build completed **1,370 Ninja steps**, normal native checks,
+179 cases / 2,239,932 assertions, both cache fixtures and integration packaging.
+Its eboot is
+`65d9cdb328e0807978022405be273c6c063d690bdd2f457043108c0bf83f0e9b`,
+matched ELF
+`7a7ab53c2caf7f49782992fff566793c7442e8b13578e33240d09950c98d119b`.
+The source stamp remains `...-b9de4ef6eb59`, matching the intended descriptor
+candidate source, but the rebuilt ELF now contains fallback `b032` at
+0x148f5cf; the private diagnostic atomic is absent. Policy receipt is
+`content-mtime-v1`. Its Low/reactive-off/1x/framegen-off console qualification
+is queued under the shared lease. Profiler failures outside measurement windows are logged
+separately by the private runners and do not substitute for valid FPS/visual
+checks. The >40 FPS objective remains unmet.
