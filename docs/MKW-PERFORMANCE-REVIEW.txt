@@ -1284,3 +1284,35 @@ cache files were restored with byte verification; the runner completed with
 no restoration errors. Game settings were only read. Broad rendering, movement
 correctness, sustained memory stability and the 40/60 FPS targets remain
 unqualified. Private archives/captures and profiles are excluded from the PR.
+
+Compute store-only frontier extension (host-verified, console comparison queued)
+Patch 0008 extends the opt-in command-fetch producer frontier to the compute
+engine's existing native_plain_methods table. CallMethod already returns after
+storing those native and legacy register values; the constructor's immutable
+table excludes launches, uploads, semaphore operations and native side effects.
+Single, repeated and macro writes reuse that exact classification. The default
+full drain, other drain sites, GPU visibility barriers and unknown producers
+retain their ordering. Compute method sinks only store registers; unlike the
+3D engine, they have no deferred draw to flush. The native-mode switch occurs
+before channel publication. This adds no guest-memory imports or driver patch.
+
+The fixture compiles actual compute frontend call sites, the constructor table
+and backend store-only prefix, plus the actual split ring/wait/dispatch methods.
+It covers all 3,584 table entries through three paths in native/non-native and
+trace/non-trace configurations, and conservative out-of-range methods. The
+heavyweight non-plain backend path and frontend macro engine are fixture
+stubs; real compilation/integration is checked by both native build variants.
+ASan/UBSan and ThreadSanitizer pass. Eight patches reproduce 143 core files.
+
+Both normal and MKW diagnostic variants passed complete native checks, build,
+link and package with source checks enabled, each with 179 core cases /
+2,239,932 assertions. No performance or correctness gain is claimed yet.
+  Diagnostic eboot: 130c01e8f6607c0247801868cf918ab163470ed0a780638b520ff970dad6edea
+  Diagnostic ELF:   d25f5443bda26caeb43a7a2ba1b6a3e53ceb61860436e904add04e1b30e8601f
+  Normal eboot:     0d8c2a1aebeecefb629a513268afd20571ade7f36ccb719df23ec81b6c0df3de
+  Normal ELF:       90ae3ca78a084dd673468c553886d1530cd3b178a9d78baa693ba8175dcf8b56
+The driver archive remains fdd18c8d492e9b7abf4324bfeacd4fb5b4134059f8c72ef7eb801b66c9c54e98.
+The diagnostic comparison is queued behind another live console task; the
+normal variant has not been console-tested. It will compare complete per-frame
+ordered-read/copy/fetch streams, unarmed guest-frame batches and kernel thread
+counters. No sampling-session reset or ownership override is attempted.
