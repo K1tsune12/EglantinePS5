@@ -861,3 +861,49 @@ Low/reactive-off/1x/framegen-off console trial is separately queued under the
 shared lease, with original-file and preference restoration. Both this trial
 and the ASTC-only trial remain pending; no title FPS gain or runtime rendering
 claim is made for either artifact. The >40 FPS objective remains unmet.
+
+
+Staging-only command-list wait diagnostic (not retained)
+-------------------------------------------------------
+
+Source review found that `Nx2SynchronizeGpuWrittenCommands` drains before it
+checks for GPU-written pages. Moving the page check ahead of the wait would
+miss pages written/marked by work still queued on the back. The earlier peer
+writer classification also omitted executable work and failed during loading.
+This diagnostic takes a more conservative approach: only non-macro Maxwell3D
+methods selected by its immutable non-executable method mask receive a distinct
+staging entry. The consumer only appends these entries to `method_sink`.
+Ordinary methods, direct macro writes, multi-method calls and deferred callbacks
+all advance the required-effect position. Full drains at other sites remain.
+
+The consumer acknowledges a completed prefix before entering a staging-only
+suffix; command-list reads may wait for that prefix. The existing GPU-written
+page test and cache flush still follow the effect wait. A private aligned
+four-byte native atomic selects full versus prefix waits, defaulting to full.
+Counters identify actual shortened waits and trailing words. The bounded
+console runner verifies PID/title, main-code bytes, matched symbol size,
+writable mapping and readback before toggling 0/1/0, and restores the atomic
+and original files/preferences in cleanup. These are diagnostic controls,
+not retained public defaults.
+
+A fixture compiles the actual queue, consumer and reset methods with mocked
+engines. ASan/UBSan and separate TSan runs passed: stalled staging suffix while
+the effect wait returns, full-drain blocking, required ordinary methods, direct
+macro writes, multi-method packets including multiple pieces, deferred and heap
+callbacks, explicit wrap marker, more than two rings of FIFO traffic, engine
+switches and session restart/reset. This establishes the exercised queue
+properties with mocks; GPU cache/renderer correctness remains unverified.
+Full normal native checks, **179 cases / 2,239,932 assertions**, build and
+package passed; the private nine-patch source reproduced 137 files.
+
+Diagnostic eboot:
+`0e74fa05593d72a3c9d88e9264898e085ebf43936f10b93316f501529b73ddaa`,
+matched ELF:
+`272fb2fdad66bdef981a95899185babcfc4ae2eb4e5932ab37c6c47c8b33c953`,
+source stamp `eglantine-3140648a668aaebf87bae2dea17512fdca125ba0-2b561656846a`.
+The full/prefix/full console comparison is queued under the lease at Low
+accuracy, reactive flushing off, 1x and frame generation off. The diagnostic
+patch/source were archived privately and removed from the retained tree after
+freezing this artifact. The public branch still reproduces eight patches /
+134 core files and retains full command-list drains. No rendering, stability
+or FPS claim is made for this diagnostic before its console result.
