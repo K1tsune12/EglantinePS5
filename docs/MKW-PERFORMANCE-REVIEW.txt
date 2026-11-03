@@ -12,11 +12,12 @@ Current build status: normal and MKW diagnostic configurations pass all required
 native build checks without EDEN_SKIP_SOURCE_CHECKS. The earlier release CPU
 instrumentation failure recorded below is resolved. Recent diagnostic attempts
 found staging failures both during Crown City travel and before opening the
-world map. The latest module-budget candidate reached the map, where a private
-navigation-runner bug interrupted the test. A corrected retry is queued. The
-final normal artifact has not been console-tested. Sustained Free Roam memory
-stability and the 40 FPS goal remain unproven. The final follow-up below records
-these failures, scope and exact artifacts.
+world map. A module-budget test reached the map but hit a private navigation
+runner bug; its corrected retry failed on a malformed index-buffer request.
+The final normal artifact has not been console-tested. An early-command-snapshot
+diagnostic reached Free Roam with short movement verified, at about 14.6 FPS.
+Sustained Free Roam memory stability and the 40 FPS goal remain unproven. The
+final follow-up below records these failures, scope and exact artifacts.
 
 The accumulated changes cover task/mesh shader handling, GPU mapping and
 readback tracking, bounded texture uploads and ASTC decoding, staging
@@ -920,3 +921,112 @@ fixture executing the actual navigation gate passes repeated input sequences
 and rejects the old shadowing implementation. A retry with the same checked
 artifact is queued; it has no result yet. The normal build, sustained movement,
 Free Roam stability and the above-40-FPS objective remain unqualified.
+
+Follow-up: malformed index allocation and early command snapshots
+The corrected module-budget retry (run 1793682542060032672, PID 778) failed
+83 seconds after launch, before the navigation gate. Its matching crash report
+and archived logs identify UpdateIndexBuffer/CreateBuffer. The preceding index
+span had first_index=0x3fa33aca, count=0xbf61abef, element_size=2 and end=0.
+The selected address span was 3,977,883,648 bytes; merging 97 overlaps enlarged
+the buffer request to 3,982,360,576 bytes (0xed5e0000). At failure the kernel
+successfully reported a largest free block of 2,449,473,536 bytes. This is a
+different failure class from the small BCn output allocation above. The
+float-like index fields suggest command lifetime/parsing or producer corruption;
+the root cause is not proven. No index clamping or draw skipping is introduced.
+
+An unchanged checked cb73b7bf diagnostic was then tested with the existing
+bounded command-snapshot mode enabled from early startup, retaining read-only
+pipeline prewarming and all other candidate settings. Snapshot eligibility still
+rejects GPU-written/dirty/resumed/unknown cases. This is a diagnostic experiment,
+not a new default or proof that every command stream may be frozen.
+
+Run 1793682828196992457, PID 780, reached actual Free Roam using reviewed
+L+R and Plus inputs. GPT-6.1 Terra confirmed the settled kart/minimap and
+plausible terrain, textures, occlusion, shadows and lighting. A 1,500 ms throttle
+pulse produced visible displacement toward the tree/muddy patch. Two subsequent
+stationary measurement images matched kart/camera/landmarks; they were darker
+than the earlier movement image, with no obvious geometry loss or error. Stills
+do not establish the cause of the lighting change or broad rendering correctness.
+
+Two complete ten-frame ordered-read/copy streams, both with snapshots on:
+  FPS                         14.5506 / 14.7024
+  Ordered reads/frame          531.9 / 544.1
+  Pooled FPS                   14.6261
+  Pooled ordered reads/frame   538.0
+  Reads over 5 ms              36 of 10,760 reads across 20 frames
+  Individual read median/p95/max ms: 0.024216 / 0.036725 / 39.001548
+  Frontend queue CPU ms/frame  62.9719
+  Backend queue CPU ms/frame    0.9491
+  GPU wait API CPU ms/frame     0.3363
+  GPU staging bytes/frame     1,004,915.2
+  Command snapshot bytes/frame  939,284.4
+These overlapping CPU intervals are not a partition of wall-frame time. Eighteen
+long reads targeted CPU VA 0x2105c35000; other addresses also stalled. All long
+reads were clean by backend service, which does not prove they were safe to
+bypass when requested. GPU command recording was inactive. No staging-copy
+visibility mismatch was reported. Final pool observation: total free
+228,032,512 bytes, largest block 73,400,320 bytes, reserve held 512 MiB.
+
+The scene differs from earlier boots, so this establishes neither an FPS/memory
+benefit for snapshots nor a fix for the malformed-index failure. The previous
+request could also be scene-dependent. Both attempts restored the executable,
+metadata, settings and owned controls/input, with verification and unchanged
+pipeline cache hashes within each run. This bounded Free Roam test supplies a
+new measurement baseline, not sustained movement/stability or the 40 FPS goal.
+
+Follow-up: shared Vulkan fence-submission experiment (not retained)
+The PID 765 archived submission report attributed 3,812 of 5,032 submissions
+in one interval to QueueFence. A separate opt-in prototype grouped up to 64
+fences behind the same submission tick, retaining command-list, forced CPU-wait
+and capacity flush boundaries. It never treated a wait timeout as completion;
+unsubmitted waits could cancel on shutdown, and derived shutdown stopped/joined
+the fencing thread before its virtual implementation disappeared. Actual method
+fixtures passed ASan/UBSan and ThreadSanitizer, and both normal/diagnostic native
+builds completed all required checks/link/package (179 cases / 2,239,932
+assertions each). An earlier prototype was withheld before deployment while
+the derived-shutdown lifetime was corrected. No driver/archive change was made.
+
+Run 1793683730640470783, PID 782, used the corrected diagnostic with early
+command snapshots held on. Free Roam was reached through reviewed title/menu
+inputs. Initial movement was excluded; a brake/neutral capture pair aligned
+kart/camera, snowbank, road lamps, distant structures and minimap. GPT-6.1 Terra
+then reviewed all four OFF/ON/OFF/ON phase captures: the stationary scene and
+rendering stayed consistent, aside from Mario's head pose in one image. No
+obvious geometry/texture/shadow loss or error screen was seen. This is bounded
+visual evidence, not continuous stability or movement qualification.
+
+Each phase has ten complete measured frames and complete read/copy streams:
+  Phase/mode       FPS       Ordered reads/frame   Front queue CPU ms/frame
+   0 / OFF        13.9556          219.6                   39.8886
+   1 / ON         13.3498          224.8                   42.4077
+   2 / OFF        13.8897          222.7                   43.2462
+   3 / ON         13.3891          228.7                   42.6637
+Pooled OFF/ON: FPS 13.9225 / 13.3694; ordered reads/frame 221.15 / 226.75;
+frontend queue CPU ms/frame 41.5674 / 42.5357; backend queue 0.3903 / 0.3997;
+GPU wait API CPU ms/frame 0.3279 / 0.3333. CPU intervals overlap across threads.
+Reads over 5 ms: 21 of 4,423 OFF versus 20 of 4,535 ON. Individual read-call
+median/p95/max ms: OFF 0.024697 / 0.041215 / 39.491480;
+ON 0.024537 / 0.042017 / 42.097105. Fewer long reads in this short sample did
+not offset increased read count, queue time or lower FPS.
+
+The ON windows covered 1,292 deferred fence requests with 302 dedicated batch
+submissions and 20 groups submitted by other boundaries. These counters count
+batched groups, not every GPU submission in the OFF windows. Grouping was
+exercised, but this workload showed no useful performance/wait-count gain.
+The prototype and its runtime polling/counters were removed from the retained
+source; the private patch, matched symbols, fixtures and raw evidence remain
+archived. The host analyzer retains optional support for these historical
+per-frame counter columns, with explicit availability=false for older captures.
+Actual traces from both formats were reanalyzed successfully.
+
+Experiment diagnostic eboot/ELF (not the retained build):
+  5a9d796b501bac1c2ac56dc52571e5fcf931e6a37e67393db229132b006ff53c
+  534cdb33780e20c664eb7be0baecb13ecb0e8aaeda4729681e195e96d0728952
+Experiment normal eboot/ELF (built, not console-tested, not retained):
+  bd1faaa3c6d3ddda8f14edda2f393da2203b35626c0b472338ebd5c716a831d4
+  47d09a9d7d8ca13a10638734383da132118f55a93aa0c936ab29f89e024bfa30
+The experiment restored executable, metadata, settings and owned controls/input
+with verification; pipeline cache bytes were unchanged. The retained source
+again reproduces five patches / 137 core files and matches the earlier cb73b7bf
+diagnostic / 8386366d normal implementation. The above-40-FPS objective remains
+unachieved; command processing/read ordering is the next measured bottleneck.
