@@ -717,3 +717,43 @@ All phases completed without a detected core failure. All three per-PID dump
 files were absent. Package/metadata/controls and the exact original settings
 bytes were restored and verified, idle confirmed, before releasing the lease.
 The >40 FPS objective remains unmet.
+
+
+Reactive flushing off with the qualified loading-fix artifact
+-----------------------------------------------------------
+
+Run `1793701678301420614`, fresh PID 868, reused the qualified 9c17df74 eboot /
+e80e9ae4 ELF. Fast GPU stayed on (Low accuracy), only reactive flushing was
+disabled relative to the earlier Low case. Launch logs verified both settings,
+unsafe CPU/DMA off, async shaders off and skip invalidation off. Resolution was
+1x and frame generation off. The split log confirmed engine work on the second
+thread and macros on the first.
+
+Ten full first-observed windows within the 60 s measured interval, excluding
+two-second boundaries, total 577 frames / 50.717545 s: **11.376734 FPS**, worst
+501.613 ms. Terra viewed start, end and post-profile images: rendered road,
+green-terrain and industrial title scenery with no obvious major corruption
+or missing geometry. Viewpoints and nearby objects changed. This differs from
+the previous castle/garden scenes, so it establishes no controlled regression
+or benefit from the preference. It does not meet >40 FPS; the original
+preference remains unchanged.
+
+A later 5 s, 99 Hz cpu-clock recording captured 1,663 samples, target stops
+averaging 123.3 microseconds and peaking at 2,863.8 microseconds. Profiling was
+after the measured interval and excluded from FPS. Native main/ELF identity
+and settings receipts were retained. The run completed without a detected core
+failure; all three per-PID dump files were absent. Package files, metadata and
+controls were restored and hash verified; exact original preference bytes
+were restored, SHA256 0b0d73fc... (the same full hash recorded above), and idle
+was confirmed before lease release. No long-term stability claim is made.
+
+The next private candidate selects the existing back-thread macro mode on PS5
+instead of front-thread macros, retaining queue ordering and the original
+8,192-spin policy. It passed full native checks/package and seven-patch / 133-file
+reproduction. Its eboot is
+`021579402f888b0ac91fd8db76eb25f04033995651d31dfd6a09b3fc4371096a`,
+matched ELF
+`21314fae53744ac0203b154ce0ef1e4fcb3cc23979c7265625691630de8bcfb3`.
+Console measurement is queued with the same Low/reactive-off/1x/framegen-off
+settings and post-window on/off-CPU profiles. This remains an unretained
+experiment pending that result, not an established performance improvement.
