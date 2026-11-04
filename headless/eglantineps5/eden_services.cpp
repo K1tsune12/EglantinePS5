@@ -1102,6 +1102,11 @@ std::vector<pe::ui::Game> EdenServices::games() {
                 game.cover = cover;
             else
                 (void)std::remove(staged.c_str());
+            // A folder has no control data, but a cover and title placed in covers/ for it are used.
+            if (IsFolderGame(file)) {
+                if (game.cover.empty() && Eden::FileExists(cover)) game.cover = cover;
+                game.name = GameTitle(file);
+            }
             game.title_id = eden_game_title_id(path.c_str());
             // The game's own language (Library > Game settings > Language) or Settings > Language.
             const GameLanguage language = LanguageFor(path, game.title_id, Eden::PreferencesFor(game.title_id).language);

@@ -1340,7 +1340,14 @@ int main(int argc, char** argv) {
                 }
 #ifdef PS5_NATIVE
                 if (game) {
-                    const auto filename = std::filesystem::path(guest).filename().string();
+                    auto filename = std::filesystem::path(guest).filename().string();
+                    // A folder game runs from <roms>/<game>/.../exefs/main: the library knows it as "<game>.dir".
+                    if (const std::string roms = Eden::AssetsPath("roms") + "/", path = guest;
+                        filename == "main" && path.rfind(roms, 0) == 0) {
+                        const std::string rest = path.substr(roms.size());
+                        if (const auto slash = rest.find('/'); slash != std::string::npos && slash > 0)
+                            filename = rest.substr(0, slash) + ".dir";
+                    }
                     const bool saved_last = Eden::SaveLastGame(filename);
                     const bool saved_recent = Eden::SaveRecentGame(filename);
                     if (!saved_last || !saved_recent)
